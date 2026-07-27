@@ -118,20 +118,11 @@ extern uint16_t rawValues[A_MAX];
 // We shouldn't need Manifold pressure, and I cannot find any reference to A_SUPPLY
 // In existing code.
 
-#define ADC_CURR_IX_MAX		20
-/*
-int ADC_curr_ix;
-uint16_t ADC_curr_t[ADC_CURR_IX_MAX];
-*/
+//#define ADC_CURR_IX_MAX		20
+#define ADC_CURR_IX_MAX		10		// MHH:15/07/2026
 const uint8_t ADC_ChanMaxCnt[ADC_CHAN_MAX]={
-//		1*ADC_SAMPLE_MULTIPLE,			// ADC0 = State
-		2,			// ADC0 = State
-//		2,			// ADC0 = State
-//		5*ADC_SAMPLE_MULTIPLE,			// ADC1 = Motor current
-//		10*ADC_SAMPLE_MULTIPLE,			// MHH:03/09/2018 ??? ADC1 = Motor current
-//		50,			// MHH:09/11/2018 ADC1 = Motor current
-//		20,			// MHH:09/11/2018 ADC1 = Motor current ???
-		ADC_CURR_IX_MAX,			// MHH: Test???
+		2,								// ADC0 = State
+		ADC_CURR_IX_MAX,				// ADC1 = Current
 		10*ADC_SAMPLE_MULTIPLE,			// ADC2 = Supply (Battery voltage)
 		10*ADC_SAMPLE_MULTIPLE,			// ADC3 = Dimmer. Used in Auxiliary port to test when AutoGyro ready.
 		10*ADC_SAMPLE_MULTIPLE,			// ADC4 = Aux.P8. MHH:27/01/2024. Also used in Auxiliary port.
@@ -144,7 +135,7 @@ const uint8_t ADC_ChanMaxCnt[ADC_CHAN_MAX]={
 
 //static int Current_flag;
 //#define ADC_ZERO_CURRENT_VAL		4
-int ADC_raw_current;			// MHH:06/11/20018
+int ADC_raw_current;			// MHH:06/11/2018
 int  getCurrentOffset (void);
 void ADC_UpdateAC200_RawValues(uint8_t chan)
 {

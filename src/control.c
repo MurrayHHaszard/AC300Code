@@ -472,15 +472,15 @@ extern int Prop_rpm_delta_per_tick_1dec;
 
 uint16_t BL_control;
 
-int16_t BL_rpm_latent_change;
-int BL_wait_count;
-int BL_delta_zero_count;
-int BL_calculated_rpm_change_1dec;
-int BL_incr;
+//int16_t BL_rpm_latent_change;
+//int BL_wait_count;
+//int BL_delta_zero_count;
+//int BL_calculated_rpm_change_1dec;
+//int BL_incr;
 int BL_count;
-int BL_lastdir;
-bool BL_wait_ini;
-uint16_t BL_actualspeed_base;
+//int BL_lastdir;
+//bool BL_wait_ini;
+//uint16_t BL_actualspeed_base;
 
 /*
  * Note: We currently use param value BL_CONTROL for rpm_change per tick,but we could calculate dynamically, but make sure calculated value within (say) 30%
@@ -701,9 +701,60 @@ void Brushless_control(void)	// See if controlling speed helps
 
 	int overspeed = ps.parms[BL_CONTROL];
 	if(overspeed < 2000 || overspeed > 9000) overspeed = 0;
+//	if(Ctl_setspeed != getParameter (SP_TAKEOFF)) overspeed = 0;	// MHH:24/07/2026
 	if(overspeed != 0)
 	{
-		if((overspeed - engine_rpm) <= 200)
+		int motor_speed_pct = 0;
+		int rpm_from_overspeed = overspeed - engine_rpm;
+		if(rpm_from_overspeed < 200)
+		{
+			if(rpm_from_overspeed < 60)		// >overspeed to overspeed - 60)
+			{
+				if(Engine_rpm_change_in_five_ticks >= -10) motor_speed_pct = SPEED_MEDIUM_PCT;
+				if(Engine_rpm_change_in_five_ticks >= 0) motor_speed_pct = SPEED_FAST_PCT;
+			}
+			else
+			{
+				if(rpm_from_overspeed < 100)
+				{
+					if(Engine_rpm_change_in_five_ticks >= 0) motor_speed_pct = SPEED_SLOW_PCT;
+					if(Engine_rpm_change_in_five_ticks >= 5) motor_speed_pct = SPEED_MEDIUM_PCT;
+					if(Engine_rpm_change_in_five_ticks >= 20) motor_speed_pct = SPEED_FAST_PCT;
+				}
+				else
+				{
+					if(rpm_from_overspeed < 160)
+					{
+						if(Engine_rpm_change_in_five_ticks >= 20) motor_speed_pct = SPEED_MEDIUM_PCT;
+						if(Engine_rpm_change_in_five_ticks >= 30) motor_speed_pct = SPEED_FAST_PCT;
+					}
+					else
+					{
+						if(BL_delta_angle >= (-0.2F))
+						{
+		//					if(Engine_rpm_change_in_five_ticks >= 10) motor_speed_pct = SPEED_SLOW_PCT;
+							if(Engine_rpm_change_in_five_ticks >= 20) motor_speed_pct = SPEED_MEDIUM_PCT;
+							if(Engine_rpm_change_in_five_ticks >= 30) motor_speed_pct = SPEED_FAST_PCT;
+						}
+						else
+						{
+							if(BL_delta_angle < (-0.5F))
+							{
+								if(Engine_rpm_change_in_five_ticks >= 50) motor_speed_pct = SPEED_MEDIUM_PCT;
+							}
+							else
+							{
+								if(Engine_rpm_change_in_five_ticks >= 40) motor_speed_pct = SPEED_MEDIUM_PCT;
+							}
+						}
+					}
+				}
+			}
+
+
+
+
+#ifdef MH_XXX
 		{
 			int motor_speed_pct = 0;
 			int sw_option = (Ctl_setspeed - engine_rpm + 100) / 20;	// MHH:20/02/2026  So if engine_rpm == setspeed then sw_option = 100/20 = 5
@@ -731,6 +782,7 @@ void Brushless_control(void)	// See if controlling speed helps
 //				if(Engine_rpm_change_in_five_ticks >= 10) motor_speed_pct = SPEED_SLOW_PCT;
 				if(Engine_rpm_change_in_five_ticks >= 20) motor_speed_pct = SPEED_MEDIUM_PCT;
 				if(Engine_rpm_change_in_five_ticks >= 30) motor_speed_pct = SPEED_FAST_PCT;
+				break;
 
 			default:	// 160-200	(5640 - 5600) (Below deadband)
 				if(BL_delta_angle >= (-0.2F))
@@ -751,6 +803,7 @@ void Brushless_control(void)	// See if controlling speed helps
 					}
 				}
 			}
+#endif
 			if(motor_speed_pct != 0)
 			{
 //				Ctl_brushless_speed = Get_speed_from_ratio(motor_speed_pct);

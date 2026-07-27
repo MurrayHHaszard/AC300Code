@@ -892,7 +892,15 @@ Added
 /*
  * MHH:08/06/2026.  Add "XPOSENC" to position exactly at encoder value. Modify positioning logic to only accept exact position
  */
-#define SUBVERSION			166			// MHH:08/06/2026
+//#define SUBVERSION			166			// MHH:08/06/2026
+/*
+ * MHH:24/07/2026. Control logic for Brushless when an Overspeed parameter is specified was sometimes sending wrong coarse speed to hub.
+ *                 Why: I think problem had 2 factors:
+ *                  1) Should have calculated from overspeed - engine_rpm, not Ctl_setspeed + 100 - engine_rpm
+ *                  2) The switch statement was missing a "break;" just before the "default:"
+ *                  Fix: Rewrite switch statement as if/else statements to make more readable
+ */
+#define SUBVERSION			167			// MHH:25/07/2026
 
 #define PCB_VERSION_MULTIPLIER	100000			// MHH:15/10/2024
 
