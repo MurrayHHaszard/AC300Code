@@ -944,11 +944,23 @@ static void ResetReceiver(void);
 BYTE AC2_TEST_get_command(void)		// AC2_TEST
 {
 	BYTE rv;
+
+#ifdef MH_XXX	// MHH:12/08/2026
+
+			char ch = (char)b;
+			rxProcessChar(ch);
 	if(rxCount == 0) return 0;
 
 	rv = rxBuf[0];
 	// Probably only need to do this if CommandAvail
 	ResetReceiver();
+#else
+	int b;
+	b = PC_getc();
+	if(b < 0) return 0;
+
+	rv = (BYTE) b;
+#endif
 	return rv;
 }
 #endif

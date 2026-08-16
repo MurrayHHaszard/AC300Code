@@ -900,7 +900,19 @@ Added
  *                  2) The switch statement was missing a "break;" just before the "default:"
  *                  Fix: Rewrite switch statement as if/else statements to make more readable
  */
-#define SUBVERSION			167			// MHH:25/07/2026
+//#define SUBVERSION			167			// MHH:25/07/2026
+/*
+ * MHH:10/08/2026. Problem: Coarse light flashing rapidly when inside deadband but RPM increasing.
+ *                 Fix: (1) Comment out brushless control logic lines with if(Engine_rpm_change_in_five_ticks >= 25)
+ *                      (2) Set bl_percent_tbl to zero if inside deadband each tick.
+ */
+//#define SUBVERSION			168			// MHH:10/08/2026
+/*
+ * MHH:12/08/2026. Problem: When in AC2TEST mode, space key was not seen by serial input.
+ *                 Fix: Modify AC2_TEST_get_command() to use PC_getc() instead of checking rxCount.
+ */
+#define SUBVERSION			169			// MHH:12/08/2026
+
 
 #define PCB_VERSION_MULTIPLIER	100000			// MHH:15/10/2024
 

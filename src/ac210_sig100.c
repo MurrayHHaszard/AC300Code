@@ -74,7 +74,7 @@ float SIG100_get_hub_voltage(void)	// MHH:25/06/2025
 	return fvoltage;
 }
 uint16_t Encoder_target_pos;
-bool Manual_position_length=false;
+bool Manual_position_encoder=false;
 extern int Prop_rpm;
 uint8_t Manual_position_count;
 int SIG100_get_position_len(uint16_t len_in_mm_2dec)
@@ -88,17 +88,17 @@ int SIG100_get_position_len(uint16_t len_in_mm_2dec)
 int SIG100_set_position_encoder(int ienc)
 {
 	Encoder_target_pos = ienc;
-	if(Encoder_target_pos > Enc_data.ud_reverse_stop) Encoder_target_pos = Enc_data.ud_reverse_stop;
-	if(Encoder_target_pos < Enc_data.ud_feather_stop) Encoder_target_pos = Enc_data.ud_feather_stop;;
+//	if(Encoder_target_pos > Enc_data.ud_reverse_stop) Encoder_target_pos = Enc_data.ud_reverse_stop;
+//	if(Encoder_target_pos < Enc_data.ud_feather_stop) Encoder_target_pos = Enc_data.ud_feather_stop;;
 
-	Manual_position_length = true;
+	Manual_position_encoder = true;
 	Manual_position_count = 0;
 	return Encoder_target_pos;
 
 }
 int SIG100_set_position_len(uint16_t len_in_mm_2dec)
 {
-	Manual_position_length = false;
+	Manual_position_encoder = false;
 	if(operatingMode() != MANUAL) return 0;	// May have to allow other possibility for RC.
 	if(Prop_rpm > 0) return 0;
 
@@ -168,7 +168,7 @@ void Hub_return_pos(void)
 		{
 			Hub_encoder_pos = Encoder_Pos;
 			PRINTF("P=%d\r\n",Encoder_Pos);
-//			DPRINTF("P=%d\r\n",Encoder_Pos);
+			DPRINTF("P=%d\r\n",Encoder_Pos);
 			PRINTF_FLUSH;
 		}
 	}
@@ -1419,14 +1419,14 @@ bool SIG100_check_packet(void)
 		BL_dac0_v   = SIG100_input_packet[5];
 		SIG100_handle_stop_flags();
 		Encoder_Pos = Get_uint16(SIG100_input_packet+6);
-		if(Manual_position_length)
+		if(Manual_position_encoder)
 		{
 //			if((Encoder_Pos >= Encoder_target_pos - 1) && (Encoder_Pos <= Encoder_target_pos + 1))
 			if(Encoder_Pos == Encoder_target_pos)	// MHH:07/06/2026
 			{
 				if(++Manual_position_count >= 5)
 				{
-					Manual_position_length = false;
+					Manual_position_encoder = false;
 				}
 			}
 		}
@@ -1958,11 +1958,11 @@ char Get_manual_command(void)
 		}
 	}
 #endif
-	if(Manual_position_length)
+	if(Manual_position_encoder)
 	{
 		if(c != '.')
 		{
-			Manual_position_length = false;
+			Manual_position_encoder = false;
 		}
 		else
 		{
@@ -2321,7 +2321,7 @@ void SIG100_send_command_pkt(char c)
 	case 'p':		// Position command
 	case 'P':
 
-		if(Manual_position_length)
+		if(Manual_position_encoder)
 		{
 			hub_pos = Encoder_target_pos;
 		}
@@ -2329,6 +2329,7 @@ void SIG100_send_command_pkt(char c)
 		{
 			hub_pos = (uint16_t)Sig100_pos_from_angle(RC_S_target_angle);
 		}
+		DPRINTF("T=%d\r\n",hub_pos);
 		Sig100_send_pkt[0] = c;	// Either 'P' for normal position, or 'p' for reverse position
 		Put_int2(Sig100_send_pkt+1,hub_pos);
 		Sig100_send_pkt[3] = ~Sig100_send_pkt[1];

@@ -808,6 +808,7 @@ void Brushless_control(void)	// See if controlling speed helps
 			{
 //				Ctl_brushless_speed = Get_speed_from_ratio(motor_speed_pct);
 				motor_speed_pct = Get_speed_from_ratio(motor_speed_pct);	// MHH:11/03/2026
+				DPRINTF("OS:C:Speed pct:%d\r\n,motor_speed_pct");
 //				Ctl_brushless_speed = motor_speed_pct + '0';
 				Ctl_brushless_speed = Get_BL_speed_from_pct(motor_speed_pct);
 				Set_cState(C_COARSER,205);		// MHH:30/01/2026
@@ -857,6 +858,11 @@ void Brushless_control(void)	// See if controlling speed helps
 //		DPRINTF("%d S=%d,A=%d,E1=%d,E2=%d\r\n",BL_count,Ctl_setspeed,prop_rpm,estimated_engine_change_rpm,estimated_engine_change_in_tank);
 
 	}
+	if(engine_adiff < Ctl_deadband)
+	{
+		memset(BL_drive_percent,0,sizeof(BL_drive_percent));	// MHH:10/08/2026
+	}
+
 	int prop_deadband2 = Ctl_deadband;
 
 	if(BL_ctl_state != BL_IDLE)		// MHH:13/08/2025. If not idle then 3/4 deadband to force
@@ -947,13 +953,16 @@ void Brushless_control(void)	// See if controlling speed helps
 		}
 	}
 #endif
+#ifdef MH_XXX	// MHH:10/08/2026. Triggering full speed when not necessary.
 	if(Engine_rpm_change_in_five_ticks >= 25)
 	{
 		if(engine_rpm > (Ctl_setspeed + 50))
 		{
+			DPRINTF("FS:Delta rpm=%d\r\n",Engine_rpm_change_in_five_ticks);
 			speed_set = true;		// defaults to full speed
 		}
 	}
+#endif
 	if(speed_set == false)
 	{
 		if(engine_adiff < fast_limit)
