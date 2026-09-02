@@ -561,6 +561,8 @@ int16_t Engine_rpm_change_in_five_ticks;
 void Brushless_control(void)	// See if controlling speed helps
 {
 	int i;
+	static bool bl_overspeed_active = false;
+
 
 //	Set_cState(C_BL_CONTROL,200);
 	Set_cState(C_IDLE,201);		// MHH:30/01/2026
@@ -687,6 +689,14 @@ void Brushless_control(void)	// See if controlling speed helps
 			if(BL_delta_rpm_on) rpm_margin = 1000;
 			if(engine_rpm >= (Ctl_setspeed - rpm_margin)) 	// Ignore?
 			{
+				if(!BL_delta_rpm_on)
+				{
+					L2PRINTF("engine PANIC activated: "
+							"rpm_change_5ticks=%d, "
+							"rpm=%d\r\n",
+							Engine_rpm_change_in_five_ticks, engine_rpm);
+				}
+
 				BL_delta_rpm_on = true;
 				Ctl_brushless_speed = 0;		// No, maximum coarse
 				Set_cState(C_COARSER,205);		// MHH:30/01/2026
@@ -695,6 +705,10 @@ void Brushless_control(void)	// See if controlling speed helps
 			}
 	//		return;		// OK, lets go maximum coarse then.
 		}
+	}
+	if(BL_delta_rpm_on)
+	{
+		L2PRINTF("engine PANIC finished\r\n");
 	}
 	BL_delta_rpm_on = false;
 
@@ -806,6 +820,14 @@ void Brushless_control(void)	// See if controlling speed helps
 #endif
 			if(motor_speed_pct != 0)
 			{
+				if(!bl_overspeed_active)
+				{
+					L2PRINTF("bl_overspeed_activated, rpm_from_overspeed=%d, "
+							"rpm_change=%d, bl_delta_angle=%d, motor_speed=%d\r\n",
+							rpm_from_overspeed, Engine_rpm_change_in_five_ticks,
+							BL_delta_angle, motor_speed_pct);
+				}
+				bl_overspeed_active = true;
 //				Ctl_brushless_speed = Get_speed_from_ratio(motor_speed_pct);
 				motor_speed_pct = Get_speed_from_ratio(motor_speed_pct);	// MHH:11/03/2026
 				DPRINTF("OS:C:Speed pct:%d\r\n,motor_speed_pct");
@@ -818,6 +840,11 @@ void Brushless_control(void)	// See if controlling speed helps
 		}
 	}
 
+	if(bl_overspeed_active)
+	{
+		L2PRINTF("bl overspeed complete\r\n")
+	}
+	bl_overspeed_active = false;
 
 	int estimated_engine_change_rpm = 0;
 
