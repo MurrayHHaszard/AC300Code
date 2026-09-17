@@ -88,7 +88,7 @@ int32_t AC210_watchdog_count;	// Use our own watch dog so we can record reason f
 uint32_t AC210_usecs_at_tick;
 uint32_t AC210_idle_percent2d;
 WORD AC210_watchdog_from;
-uint16_t gVerbose;
+uint16_t gVerbose=0;
 #define FLAG_CHECK_POWER	1
 #define FLAG_CHECK_RPM		(1<<1)
 #define AC210_HERTZ			50

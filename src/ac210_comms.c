@@ -970,6 +970,27 @@ void PC_reset_input(void)
     ResetReceiver();
 }
 //-------------------------------------------------------------------------------
+//----------------------------------------------------------------------------
+int PC_RB_bytes_avail(void)
+{
+	return (U0_rxring.head - U0_rxring.tail);
+}
+int PC_getc_timeout(uint32_t millisecs)
+{
+
+	uint32_t finish_us = us_ticker_read() + millisecs * 1000;
+	for(;;)
+	{
+		if(PC_RB_bytes_avail() > 0)	// byte available?
+		{
+			return PC_getc();
+		}
+		if(us_ticker_read() >= finish_us)
+		{
+			return -1;
+		}
+	}
+}
 int PC_getc(void)
 {
 #ifdef MH_TRY_CHIP_RB
@@ -987,8 +1008,55 @@ int PC_getc(void)
 
 // Note: We cannot have a PC_getc because LPC_UART0 is a special case and all input characters are sent via
 // rxProcessChar(c) (comms.c) to rxBuf.
-
-
+#ifdef MH_XXX
+#define PC_BUFF_MAX 		64
+uint8_t PC_buff[PC_BUFF_MAX];
+uint8_t PC_buff_len=0;
+int PC_get_line(int timeout)
+{
+	AC210_uart0_wait();		// Wait for buffer to be output
+	PC_buff_len=0;
+	int b;
+	int eol=0;
+	for(int i=0;i<timeout;i++)
+	{
+		b = PC_getc();
+		if(b == -1)
+		{
+			wait_ms(100);
+		}
+		else
+		{
+			if(b > 32)
+			{
+				if(PC_buff_len >= PC_BUFF_MAX)
+				{
+					return -1;
+				}
+				PC_buff[PC_buff_len++] = (uint8_t)b;
+			}
+			else
+			{
+				if((eol & 1) == 0)
+				{
+					if(b == 10) eol |= 1;
+				}
+				if((eol & 2) == 0)
+				{
+					if(b == 13) eol |= 2;
+				}
+				if((eol & 3) == 3)
+				{
+					PC_buff[PC_buff_len++] = 0;
+					return PC_buff_len;
+				}
+			}
+		}
+	}
+	PC_buff[PC_buff_len++] = 0;
+	return -1;
+}
+#endif
 //------------------------------------------------------------------------------------------------
 uint32_t UART0_LSR;
 uint32_t UART0_IIR;

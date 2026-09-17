@@ -298,7 +298,7 @@ void Diags_format(void)
 {
 	Stat_Rec.rtc_start_secs = AC210_RTC_secs();
 	Stat_Rec.log_flags = DIAGS_LOG_FLAG_EXTENDED;		// store params too.
-	Stat_Rec.ac_version = version;					// MHH:17/04/2026
+	Stat_Rec.ac_version = VERSION;					// MHH:17/04/2026
 	Stat_Rec.hw_version = AC210_hardware_version;	// MHH:17/04/2026
 	Stat_Rec.run_secs = 0;
 	LogData.first_checkpoint = false;

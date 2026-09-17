@@ -236,7 +236,7 @@ void AC210_display_logctl(void)
 #define SCAN_CHECKPOINT_TIMEOUT	3
 #define SCAN_DIAG_REC			4
 
-#ifdef MH_XXX
+
 uint32_t Log_peek4(void)
 {
 	uint8_t buff4[4];
@@ -245,6 +245,7 @@ uint32_t Log_peek4(void)
 	ee_getc_restore_position();
 	return Get_uint32(buff4);
 }
+#ifdef MH_XXX
 uint32_t Log_peek4_pos(int pos)
 {
 	uint8_t buff4[4];
@@ -266,8 +267,8 @@ static int Log_scan_next_run(int run)
 	if(gVerbose >= 10) PRINTF("Log_scan_next_run:Looking for next run\r\n");
 	int eof_cnt = 0;
 	int eof_pos = 0;
-	Scan.run = 0;
-	Scan.data_pos = 0;
+	Scan.run = -1;
+	Scan.data_pos = -1;
 	Scan.diag_pos = 0;
 	Scan.eof_pos = 0;
 
@@ -836,6 +837,7 @@ void AC210_logctl_repair(void)
 
 void AC210_logix_build(void)
 {
+//	ParamStore *param;
 	AC210_watchdog_active = false;				// This could take a while
 	char *pdesc = "Index_build";
 
@@ -886,6 +888,7 @@ void AC210_logix_build(void)
 	while(scan_code != SCAN_EOF)
 	{
 		scan_code = Log_scan_next_run(oldest_run);
+		if(gVerbose > 0) PRINTF_FLUSH;
 		switch(scan_code)
 		{
 		case SCAN_EOF:
@@ -906,9 +909,27 @@ void AC210_logix_build(void)
 
 */
 			if(gVerbose > 0) PRINTF("SCAN_DIAG_REC: Run:%d, data_pos:%d\r\n",Scan.run,Scan.data_pos);
+			if(Scan.run < 0 || Scan.data_pos < 0)	// MHH:01/09/2026
+			{
+				if(gVerbose > 0) PRINTF("No data checkpoint, ignoring\r\n")
+				break;
+			}
 			PRINTF("Adding run: %d\r\n",Scan.run);
 			Scan.d_r.log_start_data_pos = Scan.data_pos;		// MHH:05/01/2026
 			Log_write_stat_index(&Scan.d_r,Scan.diag_pos);		// Update index
+#ifdef MH_XXX			// MHH:02/09/2026. Debug code, not needed for rebuild.
+			if(Scan.d_r.log_flags & DIAGS_LOG_FLAG_EXTENDED)
+			{
+				AC210_flash_read_part(Scan.diag_pos+256,UU_fBuff,256);
+				param = (ParamStore *) &UU_fBuff;
+				long check_code = param->checkCode;
+				if(check_code != PARAM_CHECK_CODE)
+				{
+					PRINTF("Extended Diagnostics record but cannot find Param record\r\n");
+				}
+
+			}
+#endif
 			if(Scan.run >= Stat_Rec.run_number -1)
 			{
 				scan_code = SCAN_EOF;		// This should cause exit while
@@ -921,6 +942,7 @@ void AC210_logix_build(void)
 			PRINTF(":A:ERR:Unknown scan_code\r\n");
 			return;
 		}
+		if(gVerbose > 0) PRINTF_FLUSH;
 	}
 	if(scan_code == SCAN_EOF)
 	{
@@ -1065,7 +1087,33 @@ int Find_correct_logctl_data(void)
 	}
 	return 0;
 }
-
+int AC300_map_logdata_file(int ival)
+{
+	int lpage=0;
+	int lsector = 0;
+	AC210_watchdog_active = false;				// This could take a while
+	PRINTF("\r\nAC300_map_logdata_file\r\n");
+	char c=0;
+//	for(lsector=0;lsector <=10;lsector++)
+	for(lsector=0;lsector <=254;lsector++)
+	{
+		PRINTF("\r\nSector:%3d,Page:%5d: ",lsector,lsector*64);
+		for(int sec_page=0;sec_page<=63;sec_page++)
+		{
+			if(sec_page != 0 && sec_page %10 == 0) PC_putc(32);
+			lpage = lsector*64 + sec_page;
+			c = 'D';			// default to data
+			if(Check_log_page_erased(lpage))
+			{
+				c = '.';		// Page is erased
+			}
+			PC_putc(c);
+		}
+	}
+	PRINTF("\r\n\r\nFinished\r\n");
+	AC210_watchdog_active = true;
+	return 0;
+}
 int Verify_logctl_data(bool fix_logctl)
 {
 
@@ -1641,6 +1689,8 @@ void AC210_logix_show(void)
 	int start_data_pos;
 //	int head_wrap_cnt;
 	int run;
+	AC210_watchdog_active = false;				// This could take a while
+
 	PRINTF("\r\nATX_show_index:\r\n");
 //	PC_flush_output();
 	//               1         2         3         4         5
@@ -1700,6 +1750,7 @@ void AC210_logix_show(void)
 				return;
 			}
 		}
+#ifdef MH_XXX	// MHH:02/09/2026
 		if((rix+1)%40 == 0)
 		{
 			if(PC_ReturnToContinue() == 'X')
@@ -1707,6 +1758,7 @@ void AC210_logix_show(void)
 				break;
 			}
 		}
+#endif
 #ifdef MH_READ_DIAG
 		if(eelog_read_diag_rec(&d_r,drec_pos))
 		{
@@ -1716,6 +1768,7 @@ void AC210_logix_show(void)
 #endif
 	}
 	PRINTF("Finished\r\n");
+	AC210_watchdog_active = true;
 }
 //--------------------------------------------------------------------------------------------------------------
 #ifdef MH_XXX

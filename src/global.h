@@ -911,8 +911,44 @@ Added
  * MHH:12/08/2026. Problem: When in AC2TEST mode, space key was not seen by serial input.
  *                 Fix: Modify AC2_TEST_get_command() to use PC_getc() instead of checking rxCount.
  */
-#define SUBVERSION			169			// MHH:12/08/2026
+//#define SUBVERSION			169			// MHH:12/08/2026
 
+/*
+ * MHH:02/09/2026. Added keyword "ATXLOGMAP=0" and function AC300_map_logdata_file(value) to display a code for each log page.
+ *                 'D' = data page, '.' = erased page. Output to standard serial print.
+ *
+ *                 Changed "ATXIBUILD=2476" (Index rebuild) to only add index if valid data pointer and valid run number found.
+ *
+ *
+ *
+ */
+//#define SUBVERSION			170			// MHH:02/09/2026
+/*
+ * MHH:08/09/2026: Add keyword "ATXRS232TEST" to test AC300Diagnostics receiving 1 megabyte of data from AC300
+ */
+//#define SUBVERSION			171			// MHH:08/09/2026
+
+/*
+ * MHH:13/09/2026. Add void AC300_RS232_test(void) and Serial binary transfer with CRC32 verification:void Diags_send_UU_fbuff_page(int page)
+ *                 Only if Diags_version >= 133
+ */
+
+/*
+ * MHH:15/09/2026. When saving a single or multiple selected runs from the history screen, if the first run was assumed to be the highest run.
+ *                 This meant that the diagnostics record for the highest run was saved and, the run data was not found.
+ *                 Fix: If not highest, then find diagnostics record for run, and if an extended diagnostics then find associated param record too.
+ *                 Copy these into first page sent. See void AC210_ee_load_range(void)
+ *
+ *
+ * MHH:17/09/2026  Set Watchdog flag true inside main loop in case turned off and not turned back on. AC210_watchdog_active = true;
+ *
+ * 					Add logic to send Hub and AC300 program log after every log file save. Includes single run save, multirun save, save 1 megabyte etc.
+ * 					Note Need Diagnostics version 10.133 at least to use this feature.
+ *
+ *
+ */
+#define SUBVERSION			172			// MHH:17/09/2026
+#define VERSION	(10000+SUBVERSION)		// MHH:15/05/2024
 
 #define PCB_VERSION_MULTIPLIER	100000			// MHH:15/10/2024
 

@@ -116,6 +116,8 @@ int AC210_logix_erase(WORD value);
 
 void AC210_logctl_repair(void);
 
+int AC300_map_logdata_file(int ival);
+
 void AC210_logctl_check_run();
 void AC210_display_logctl(void);
 void AC210_log_init(void);
@@ -238,7 +240,9 @@ void Aux_check_line(void);	// defined in AC210_comms.c
 void PC_putc(char ch);
 //void PC_getline();
 void PC_flush_output(void);
+int PC_RB_bytes_avail(void);
 int PC_getc(void);		// MH:16/03/2023. Maybe we can...Cannot have this because LPC_UART0 special case and all characters sent to rxBuF, terminated by CRLF
+int PC_getc_timeout(uint32_t millisecs); // MHH:09/09/2026
 void PC_puts(const char *buf);
 int PC_ReturnToContinue(void);
 void Aux2_puts(char *string);

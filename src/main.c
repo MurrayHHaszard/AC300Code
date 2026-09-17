@@ -60,12 +60,10 @@ const WORD version = 500+SUBVERSION;
 #endif
 #endif
 //#define VERSION	(400+SUBVERSION)
-#define VERSION	(10000+SUBVERSION)		// MHH:15/05/2024
-const WORD version = VERSION;
-#ifdef AC210_PORT
-//const unsigned char Version_id[]={254,4,253,3,VERSION/256,VERSION&255};	// May be able to scan for it
+
+//const WORD version = VERSION;
+
 const unsigned char Version_id[]={'X','X',':','V',':',0,VERSION/256,VERSION&255,':',':'};	// May be able to scan for it
-#endif
 
 /*
 ======================================================================================================
@@ -1156,35 +1154,21 @@ void main(void)
 
     monitor = 0;
 
-#ifndef AC210_PORT
-    // set up a 20 mSec timer on TB0
-    vector_table[26] = (unsigned long)mainTimer;
-    TB0MR = 0x40;   // divide by 8, timer mode
-    // load the count
-    TB0 = 39999;    //16 MHz clock, freq /(n+1)
-    // enable interrupt
-    TB0IC = 0x04;
-    // start the timer
-    TABSR |= 0x20;
-#endif
-
     sprintf (tmp, "Reset[%d]\r\n", invalidConfig);
     txDebug (tmp);
 
 //	setMainTimerLimit(100);		// DEBUG!!!!
-    L2PRINTF("Run:%d\r\n",Stat_Rec.run_number+1);	// It will get incremented
+    L2PRINTF("Run:%d, Version:%d.%03d\r\n",Stat_Rec.run_number+1,VERSION/1000,VERSION%1000);	// It will get incremented
 
 //    Wait_secs_no_watchdog(5);
     for (;;)
     {
+    	AC210_watchdog_active = true;				// MHH:17/09/2026. To be sure...
 #ifdef AC2_TEST
     	if(ac2_test_flag == AC2_TEST_ON)
     	{
-#ifdef AC210_PORT
 	    	p_Wait();
-#else
-	    	while (waiting);
-#endif
+
             watchIt(WD_MAIN+35);
 
             IncrementTimer();

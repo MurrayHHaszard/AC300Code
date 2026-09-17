@@ -2303,7 +2303,7 @@ void SIG100_send_command_pkt(char c)
 	case 'k':
 		Sig100_send_pkt[0] = 'k';	// Only send this if hub version > 149
 		Sig100_send_pkt[1] = 'K';	// Initial data
-		Put_int2(Sig100_send_pkt+2,version);					// MHH:08/01/2026
+		Put_int2(Sig100_send_pkt+2,VERSION);					// MHH:08/01/2026
 		Sig100_send_pkt[4] = 0;		// Reserved for future use
 		Sig100_send_pkt[5] = 0;		// Reserved for future use
 		Sig100_checksum_and_send_pkt(SIG100_k_PKT_LEN);			// MHH:08/01/2026

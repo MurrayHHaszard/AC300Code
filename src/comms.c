@@ -44,6 +44,7 @@ Changes:
 #include "log.h"
 #include "analog.h"	// for A_MOTOR_CURRENT
 #include "xoar.h"
+#include "uuencode.h"
 
 /*
   Coms uses serial port 1. Default is 19200 Baud, 8 data 1 stop  no parity
@@ -1713,7 +1714,7 @@ void dumpAllParameters (void)
 
     // first the version
 //    sprintf(rs, "VERSION=%d\r\n", ((int)pcbVersion() * 1000) + version);
-    sprintf(rs, "VERSION=%d\r\n", ((int)pcbVersion() * PCB_VERSION_MULTIPLIER) + version);	// MHH:15/05/2024
+    sprintf(rs, "VERSION=%d\r\n", ((int)pcbVersion() * PCB_VERSION_MULTIPLIER) + VERSION);	// MHH:15/05/2024
     send(rs,strlen(rs));
     // then the parameters
     watchIt(WD_COMMS+20);
@@ -2031,6 +2032,75 @@ extern uint8_t SIG100_display;
 extern bool Hub_return_position;
 extern uint8_t Sig100_init_status;
 extern int Prop_rpm_1dec;
+int PC_get_line(int timeout);
+#define PC_BUFF_MAX 		64
+extern uint8_t PC_buff[PC_BUFF_MAX];
+extern uint8_t PC_buff_len;
+#define		ACK	0x6
+#define		NAK	0x15
+char Serial_header[8];
+
+bool Diags_RS232_page_logic;
+
+uint32_t Wiki_CRC32(const uint8_t data[],size_t data_length);
+
+void Diags_send_UU_fbuff_page(int page)
+{
+	uint32_t crc32 = Wiki_CRC32(UU_fBuff,1024);
+	Serial_header[0] = ':';
+	Serial_header[1] = 'C';		// For CRC32
+	uint32_t *uip = (uint32_t *)(Serial_header+2);
+	*uip = crc32;
+	p_send(Serial_header,6);
+	p_send((char *)UU_fBuff,1024);
+	while(true)
+	{
+		while(PC_RB_bytes_avail() == 0);
+		int b = PC_getc();
+		//		int b = PC_getc_timeout(1000);
+		if(b == ACK)
+		{
+//			ACK_count++;
+			DPRINTF("page=%d ACK\r\n",page);
+			return;
+		}
+		if(b == NAK)
+		{
+			Serial_header[1] = 'R';		// For Resend
+			DPRINTF("page=%d, NAK, resending\r\n",page);
+			p_send(Serial_header,6);
+			p_send((char *)UU_fBuff,1024);
+		}
+		else
+		{
+			DPRINTF("Unexpected response, page=%d, b=%d\r\n",page,b);
+		}
+	}
+
+}
+
+void AC300_RS232_exit(void)
+{
+	DPRINTF("Normal exit\r\n");
+	PC_putc(':');
+	PC_putc('X');
+}
+void AC300_RS232_test(void)
+{
+	AC210_watchdog_active = false;
+	int count=0;
+//	int ACK_count=0;
+	for(int page=0;page<1000;page++)
+	{
+		int *ip = (int *)UU_fBuff;
+		for(int i=0;i<256;i++)
+		{
+			*ip++ = count++;
+		}
+		Diags_send_UU_fbuff_page(page);
+	}
+	AC300_RS232_exit();
+}
 //-------------------------------------------------------------------------
 static int ATX_command(BYTE query,WORD *p_value)
 {
@@ -2332,6 +2402,15 @@ static int ATX_command(BYTE query,WORD *p_value)
 			AC210_display_logctl();
 			return ATX_RETURN;
 	    }
+
+	    if (AT_KeywordMatch("XLOGMAP"))	// MHH:02/09/2026
+	    {
+		    if(query) value = 0;
+		    AC300_map_logdata_file(value);
+	        return ATX_OK;
+	    }
+
+
 #ifdef MH_XXX	    // MHH:03/08/2023. Thinking about a new way of mapping run_number to position in ssp flash memory. See comments in AC210_display_logctl();
 	    if (AT_KeywordMatch("XLOGHEXDUMP"))
 	    {
@@ -2413,9 +2492,6 @@ static int ATX_command(BYTE query,WORD *p_value)
 			}
 			PRINTF_FLUSH;
 			return ATX_RETURN;
-
-
-
 	    }
 		break;
 
@@ -2431,6 +2507,19 @@ static int ATX_command(BYTE query,WORD *p_value)
 	    {
 	    	txDebug("OK\r\n");
 	    	AC210_restore_flash();
+	    	// May need to reboot? To Load param and diags rec?
+	        return ATX_RETURN;
+	    }
+
+	    if (AT_KeywordMatch("XRS232TEST"))
+	    {
+	    	txDebug("OK\r\n");
+		    AC210_PC_ChangeBaud(115200);
+	    	AC300_RS232_test();
+			AC210_watchdog_active = true;
+		    AC210_PC_ChangeBaud(19200);
+
+
 	    	// May need to reboot? To Load param and diags rec?
 	        return ATX_RETURN;
 	    }
@@ -2732,6 +2821,12 @@ static int Process_non_indexed_commands(BYTE query,WORD *p_value)
         {
         	if (query) break;
         	Diags_version = value;
+        	Diags_RS232_page_logic = (Diags_version >= 1133);	// MHH:13/09/2026
+        	DPRINTF("DIAGVER:%d\r\n",Diags_version);
+        	if(Diags_RS232_page_logic)
+        	{
+        		DPRINTF("Using CRC32 Serial send\r\n");
+        	}
         	return ATX_OK;
         }
 		break;
@@ -2920,7 +3015,7 @@ static int Process_non_indexed_commands(BYTE query,WORD *p_value)
  *	10 = Version type (used to be used when separate compiles for BETA,REMOTE etc)
  *	101 = subversion. Previously limited to 2 bytes, with a maximum of 99.Now max 999.
  */
-			sprintf(rs, "VERSION=%ld\r\n", (pcb_version * PCB_VERSION_MULTIPLIER) + version);	// MHH:15/05/2024
+			sprintf(rs, "VERSION=%ld\r\n", (pcb_version * PCB_VERSION_MULTIPLIER) + VERSION);	// MHH:15/05/2024
 			send(rs,strlen(rs));
 			return ATX_RETURN;
 		}

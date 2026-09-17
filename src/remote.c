@@ -3115,8 +3115,8 @@ void checkRemoteCANcommand(void)
 		CAN_snd_status_msg.ID = 710 + ps.parms[RC_PROPNUM];
 		CAN_snd_status_msg.Type = 0;		// Not CAN_REMOTE_MSG
 
-		CAN_snd_status_msg.Data[0] = version >> 8;
-		CAN_snd_status_msg.Data[1] = version & 255;
+		CAN_snd_status_msg.Data[0] = VERSION >> 8;
+		CAN_snd_status_msg.Data[1] = VERSION & 255;
 		CAN_snd_status_msg.Data[2] = ps.parms[AC_CONTROL_WORD] >> 8;
 		CAN_snd_status_msg.Data[3] = ps.parms[AC_CONTROL_WORD] & 255;
 		CAN_snd_status_msg.Data[4] = ps.parms[BL_HUB_SOFTWARE_VERSION] >> 8;
@@ -3262,7 +3262,7 @@ void process_RC_Standard (char *cmd)
 
 		sprintf(dataline,"VERSION=%d,AC200CW=%d,RCTY=%d,RCDI=%d,RCFE=%d,\r\n",
 //				(int)pcbVersion() * 1000 + version,
-				(int)pcbVersion() * PCB_VERSION_MULTIPLIER + version,	// MHH:15/05/2024
+				(int)pcbVersion() * PCB_VERSION_MULTIPLIER + VERSION,	// MHH:15/05/2024
 				ps.parms[AC_CONTROL_WORD],
 				ps.parms[REMOTE_COMMS_TYPE],
 				ps.parms[RC_DATA_INTERVAL],

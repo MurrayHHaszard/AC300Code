@@ -1387,8 +1387,15 @@ void eeprom_log_reset(WORD val)
 	AC210_watchdog_active = true;
 }
 //--------------------------------------------------------------------------------------------------------
-void ee_output_buffer(void)
+void ee_output_buffer(int page)
 {
+
+	if(Diags_RS232_page_logic)			// Need a flag to indicate Diagnostics can handle it
+	{
+		Diags_send_UU_fbuff_page(page);
+		return;
+	}
+
 	char pbuff[80];
 	uint8_t *fsrc=UU_fBuff;                       // src = start of file buffer
     UU_Sum20 = 0;
@@ -1452,7 +1459,19 @@ void ee_output_buffer(void)
 }
 //--------------------------------------------------------------------------------------------------------
 //#define AC210_EELOG_HEADER_PAGES			4
+void AC300_RS232_exit(void);
 
+void ee_dump_finish(void)
+{
+	if(Diags_RS232_page_logic)			// Need a flag to indicate Diagnostics can handle it
+	{
+		AC300_RS232_exit();
+	}
+
+	txDebug(":A:PLOG\r\n");
+	AC210_plog_display(1);
+	txDebug(":A:EOF\r\n");
+}
 void ee_dump_all_pages(void)
 {
 // May be helpful to dump current Stat_Rec as well, as this gives pointers to last used.
@@ -1479,7 +1498,7 @@ void ee_dump_all_pages(void)
 	    txDebug(":A:ERR\r\n");
 		DebugAbort("i2c_read");
 	}
-	ee_output_buffer();
+	ee_output_buffer(0);
 
 	pos = 0;
 	for(int page=0;page<=file_pages;page++)
@@ -1493,12 +1512,10 @@ void ee_dump_all_pages(void)
 		    printf("Error reading log\r\n");
 		    return;
 		}
-		ee_output_buffer();
+		ee_output_buffer(page);
 		pos += EELOG_PAGESIZE;
 	}
-	txDebug(":A:PLOG\r\n");
-	AC210_plog_display(1);
-    txDebug(":A:EOF\r\n");
+	ee_dump_finish();
 #ifdef MH_VERBOSE
 	printf("Finished dump\r\n");
 #endif
@@ -1545,7 +1562,7 @@ void ee_dump_page_range(int first_page,int last_page)
 		Put_int2(UU_fBuff,(int16_t) page);
 		Put_int2(UU_fBuff+2,(int16_t) page+page_adjust);
 #endif
-		ee_output_buffer();
+		ee_output_buffer(page);
 		pos += EELOG_PAGESIZE;
 		Pages_output++;
 	}
@@ -1601,9 +1618,11 @@ void ee_dump_last_XMb_pages(int megabytes)	// MHH:31/07/2023
 //	uint8_t *pdst=UU_fBuff + EE_LOGCTL_POS + 32;
 	uint8_t *pdst=UU_fBuff + EE_DUMP5MB_OFFSET;	// Next to plog head
 	memcpy(pdst,psrc,sizeof(Dump5Mb));
-	ee_output_buffer();
 
 	AC210_watchdog_active = false;				// This could take a while
+
+	ee_output_buffer(0);
+
 
 	int from_page,to_page;
 	Pages_output = 0;
@@ -1614,9 +1633,7 @@ void ee_dump_last_XMb_pages(int megabytes)	// MHH:31/07/2023
 //		page_adjust = Dump5Mb.pagemap[i].page_adjust;
 		ee_dump_page_range(from_page,to_page);	// Could have just passed the index...
 	}
-	txDebug(":A:PLOG\r\n");
-	AC210_plog_display(1);
-	txDebug(":A:EOF\r\n");
+	ee_dump_finish();
 #ifdef MH_VERBOSE
 	DPRINTF("Finished dump\r\n");
 #endif
@@ -1701,13 +1718,14 @@ static void UU_putc(uint8_t c)
 	UU_fBuff[UU_fbuff_ix++] = c;
 	if(UU_fbuff_ix >= EELOG_PAGESIZE)
 	{
-		ee_output_buffer();
+		ee_output_buffer(0);
 		UU_fbuff_ix = 0;
 	}
 }
 //-----------------------------------------------------------------------------------------
 void AC210_ee_load_range(void)
 {
+
 	if(Stat_Rec.log_start_data_pos < 0)
 	{
 #ifdef MH_VERBOSE
@@ -1732,20 +1750,81 @@ void AC210_ee_load_range(void)
 	    txDebug(":A:ERR\r\n");
 		DebugAbort("i2c_read");
 	}
-	ee_output_buffer();
-
-//	ee_serial_read_ix = EE_SER_BUFF_SIZE;				// force read
 
 	int first_run = AC210_range.first_run;
 	int last_run  =  AC210_range.last_run;
-
-	int run_offset = 0;		// Use this to adjust start_data and last_drec ptr
-	int last_drec_pos = -1;	// End of chain
-	UU_fbuff_ix=0;
-
-	int start_data_pos;
 	int drec_pos;
 	td_Stats d_r;
+
+	Index_get_index(first_run);
+	if(pIndex->run != first_run)
+	{
+		txDebug("A:ERR:first_run not found\r\n");
+		return;
+	}
+	drec_pos = pIndex->log_diag_pos;
+	if(eelog_read_diag_rec(&d_r,drec_pos))	// Read diagnostic rec
+	{
+		txDebug(":A:ERR:last_run invalid drec\r\n");
+		return;
+	}
+
+	int first_data_pos = d_r.log_start_data_pos;
+	int last_data_pos = AC210_log.putc_pos;
+	if(Stat_Rec.run_number != last_run)		// MHH:15/09/2026
+	{
+		Index_get_index(last_run);
+		if(pIndex->run != last_run)
+		{
+			txDebug("A:ERR:last_run not found\r\n");
+			return;
+		}
+		drec_pos = pIndex->log_diag_pos;
+		if(eelog_read_diag_rec(&d_r,drec_pos))	// Read diagnostic rec
+		{
+		    txDebug(":A:ERR:last_run invalid drec\r\n");
+		    return;
+		}
+		memcpy(UU_fBuff+256,(uint8_t *)&d_r,256);	// Copy in diagnostic record
+		if(d_r.log_flags & DIAGS_LOG_FLAG_EXTENDED)
+		{
+			if(Log_peek4() == PARAM_CHECK_CODE)	// MHH:18/04/2026. Param rec?
+			{
+				for(int j=0;j<256;j++) UU_fBuff[j] = ee_getc();
+			}
+		}
+		last_data_pos = drec_pos + 2048;	// To be sure
+	}
+
+	ee_output_buffer(0);
+
+//	ee_serial_read_ix = EE_SER_BUFF_SIZE;				// force read
+
+
+//	int run_offset = 0;		// Use this to adjust start_data and last_drec ptr
+//	int last_drec_pos = -1;	// End of chain
+	UU_fbuff_ix=0;
+
+	int bytes_to_tfer = last_data_pos - first_data_pos;
+	if(bytes_to_tfer < 0) bytes_to_tfer += EELOG_SPACE;		// In case wrap
+
+	ee_getc_position(first_data_pos);
+
+	for(int bcnt = 0;bcnt<bytes_to_tfer;bcnt++)
+	{
+		uint8_t c = ee_getc();
+		UU_putc(c);
+	}
+	while(UU_fbuff_ix > 0)
+	{
+		UU_putc(255);		// 255 fill to eof of page and flush
+	}
+
+#ifdef MH_YYY
+
+
+	int start_data_pos;
+
 	Index_page = -1;	// In case of restore or reset
 
 	Log_putc_write_buffer();	// MHH:10/12/2023. So we can use putc_pos, not putc_pos2
@@ -1830,7 +1909,12 @@ void AC210_ee_load_range(void)
 		UU_putc(0);		// null fill to eof of page and flush
 	}
 	// OK, still have to tell AC200Diagnostics where the last diags rec is.
-	PRINTF(":A:DPOS=%d\r\n",last_drec_pos);
+#endif
+
+	ee_dump_finish();
+
+
+//	PRINTF(":A:DPOS=%d\r\n",last_drec_pos);		// MHH:16/09/2026. This is now redundant for latest Diagnostics, but leave in for earlier versions.
 
 //	txDebug(":A:EOF\r\n");
 
@@ -1931,18 +2015,24 @@ void AC210_ee_load(WORD value)	// called from comms.c
 		bytes_out++;
 		if(uu_ix >= EELOG_PAGESIZE)
 		{
-			ee_output_buffer();
+			ee_output_buffer(i/1024);
 			uu_ix = 0;
 		}
 	}
 	if(uu_ix > 0)
 	{
 		for(int i=uu_ix;i<EELOG_PAGESIZE;i++) UU_fBuff[i] = FLASH_EOF;	// eof fill to end of page
-		ee_output_buffer();
+		ee_output_buffer(log_max_size/1024);
 	}
 #ifdef MH_VERBOSE
 	printf("\r\nFinished:bytes_out=%d\r\n",bytes_out);
 #endif
+	if(Diags_RS232_page_logic)
+	{
+		ee_dump_finish();
+		return;
+	}
+
 	if(eof_ix != FLASH_EOF_COUNT && (Diags_last_drec_pos == -1))
 	{
 	    txDebug(":A:ERR:No EOF\r\n");

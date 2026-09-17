@@ -155,6 +155,7 @@ extern BYTE Diags_param_update;
 #ifdef AC210_PORT
 extern int Diags_last_drec_pos;
 extern WORD Diags_version;
+extern bool Diags_RS232_page_logic;
 extern td_Stats Diags_last_d_r_sent;
 //#define FAR
 #endif
@@ -170,6 +171,8 @@ void Diags_send_rec_all(void);
 void Diags_send_rec(td_Stats far *d_r,int pos,int send_len);
 void Diags_update_rec(void);
 void Diags_uuencode_send_buff(uint8_t *pbuff,int buff_len,int u_prefix);
+
+void Diags_send_UU_fbuff_page(int page);
 
 #define DIAGS_NO_PREFIX			0
 #define DIAGS_U_PREFIX			1
