@@ -20,6 +20,24 @@ Changes:
 
 #if REMOTE_VERSION
 
+#define RC2_PWM_COMMAND		0
+#define RC2_SPEED_COMMAND	1
+#define RC2_ANGLE_COMMAND	2
+
+#define RC2_HUB_COMMAND_PWM_FINE		1
+#define RC2_HUB_COMMAND_PWM_COARSE		2
+
+#define RC2_HUB_COMMAND_SPEED_FINE		3
+#define RC2_HUB_COMMAND_SPEED_COARSE	4
+
+#define RC2_HUB_COMMAND_SET_ANGLE		5
+
+extern uint8_t RC2_command;
+extern uint8_t RC2_hub_command;
+extern bool RC2_new_command;
+extern bool RC2_mode;
+extern int32_t RC2_cmd_val;
+
 void checkRemoteCANcommand(void);
 
 void process_RC_Standard (char *cmd);

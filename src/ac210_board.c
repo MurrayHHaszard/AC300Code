@@ -312,12 +312,6 @@ void AC210_brushless_pin_init(void)
 {
 	if(getParameter (BL_ENABLED) != 1) return;
 
-	if(ps.parms[RC_MISC_OPTIONS] & 1)
-	{
-		AC210_remote_control_board = true;		// MHH:03/11/2023. RC_BOARD should be redundant now, was only added when no pin to identify RC board
-		Chip_IOCON_PinMuxSet(LPC_IOCON,PIN_DEF2(AC210_ADC5_TEMPERATURE_PIND),IOCON_MODE_INACT | IOCON_FUNC3); /* P1.31, 20, AD0.5, also used to output a MagInt signal for test */
-	}
-
 //	if(ps.parms[BL_DIAGNOSTICS] & P_BL_LOGIC_BRUSHLESS) AC210_brushless_board = true;
 	AC210_brushless_board = true;	// MHH:09/02/2026
 

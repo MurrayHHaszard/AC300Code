@@ -1035,6 +1035,7 @@ void rxProcessChar(BYTE ch)
     }
 
 // If we drop through we are NOT in ASCII mode
+#ifdef MH_XXX		// MHH:30/09/2026. Move Serial to CAN to Idle Loop (waiting for new tick).
 	if(S_Pkt.Mode == SERIAL_MODE_CAN)
 	{
 		if(rxCount == 0)
@@ -1058,7 +1059,10 @@ void rxProcessChar(BYTE ch)
 			}
 		}
 	}
-	else
+#endif
+//	else
+
+	if(S_Pkt.Mode == SERIAL_MODE_XOAR)
 	{
 		if(rxCount == 0) {	// If first byte must be head_0
 			if(ch != S_Pkt.Pkt_Head_0) {
@@ -1645,7 +1649,7 @@ void Process_ascii_command(void)
 
 }
 //-----------------------------------------------------------------------------------------------------------
-int CANProcessCommand(char *rxBuf,int rxCount);
+int CANProcessCommand(char *rxBuf);
 
 void checkForCommand (void)
 {
@@ -1680,12 +1684,13 @@ void checkForCommand (void)
 		// and exit
 		return;
 	}
+#ifdef MH_XXX	// MHH:30/09/2026. Move this to inside idle loop.
 	if(S_Pkt.Mode == SERIAL_MODE_CAN)
 	{
 		for(;;)			// May be more than one command per Tick
 		{
 			ResetReceiver();
-			int result = CANProcessCommand(rxBuf,rxCount);
+			int result = CANProcessCommand(rxBuf);
 			if(result != 0) return;		// error sending or end can_serial_mode from PC
 		    Get_data_from_RB();
 		    if (commandAvailable == 0)
@@ -1694,7 +1699,7 @@ void checkForCommand (void)
 		    }
 		}
 	}
-
+#endif
     watchIt(WD_COMMS+110);
     for(int i=0;i<10;i++)
     {
@@ -2192,7 +2197,12 @@ static int ATX_command(BYTE query,WORD *p_value)
 		    if(value > 2)
 		    {
 		    	PRINTF("INVALID CODE\r\n");
-		    	return ATX_RETURN;
+		    	return ATX_ERROR;
+		    }
+		    if(ps.parms[REMOTE_COMMS_TYPE] != REMOTE_COMMS_CAN)
+		    {
+		    	PRINTF("NOT RS232_CAN_TYPE\r\n");
+		    	return ATX_ERROR;
 		    }
 		    CAN_mode = CAN_MODE_SERIAL;
 		    if(value == 2)

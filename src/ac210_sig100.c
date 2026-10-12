@@ -26,6 +26,7 @@
 #include "drive.h"
 #include "remote.h"
 #include "diags.h"
+#include "turbotech.h"
 
 #define PC_PUTS(a)			PC_puts(a)
 #define PC_PUTC(a)			PC_putc(a)
@@ -61,11 +62,13 @@ float tan_d(float angle_in_degrees)
 float SIG100_get_hub_voltage(void)	// MHH:25/06/2025
 {
 	float fvoltage = (float)(ADC_adjusted_voltage * 16);
+#ifdef MH_XXX	// MHH:12/10/2026
 //	fvoltage /= 10.954;		// By experiment, should have an implied decimal place
 	if(fvoltage < 1800.0F)
 	{
 		fvoltage *= 0.9F;		// MHH:16/10/2025. By experiment, should have an implied decimal place
 	}
+#endif
 	if(Enc_data.voltage_correct_pct == 0) Enc_data.voltage_correct_pct = 100;	// Set default
 	fvoltage  = (fvoltage * Enc_data.voltage_correct_pct)/100;
 //		fvoltage /= 10.954;		// By experiment, should have an implied decimal place
@@ -1344,6 +1347,10 @@ void Sig100_check_count(void)
 }
 #endif
 
+
+struct RC2_STATUS RC2_status;
+
+
 bool SIG100_check_packet(void)
 {
 	SIG100_packet_ix = 0;	// Assume that entire packet is waiting.
@@ -1369,6 +1376,7 @@ bool SIG100_check_packet(void)
 		case '@':
 		case '*':
 		case '^':
+		case '~':
 			valid_header = true;
 			break;
 		}
@@ -1382,6 +1390,65 @@ bool SIG100_check_packet(void)
 	{
 	default:		// Should never get here
 		return false;
+
+	case '~':		// RC2 message format?
+
+		/*
+		 * byte
+		 * 0     '~'
+		 * 1	flags
+		 * 2	Volts-8 hi
+		 * 3	ADC Temp 8 hi
+		 * 4	dac0_v- hi
+		 * 5.0	Volts-4 lo
+		 * 5.4	ADC Temp-4 lo
+		 * 6	enc_pos-lo
+		 * 7	enc_pos-hi
+		 * 8	enc_rpm hi
+		 * 9.0 	enc_rpm lo 3 bits
+		 * 9.3  spare
+		 * 9.4	dac0_v-2 low
+		 * 9.6  dir_pin (1 = FINE)
+	     * 9.7	spare
+		 * 10   spare
+		 * 11	checksum
+		 *
+		 * 12	Total
+		 */
+
+		SIG100_rcv_pkt();
+		if(SIG100_packet_ix != 12) // Expect 12 bytes
+		{
+			Sig100_bad_receive(41);
+			return false;
+		}
+		if(SIG100_checksum_input_pkt(12) == false)
+		{
+			Sig100_bad_receive(42);
+			return false;
+		}
+		RC2_status.flags = SIG100_input_packet[1];
+		uint8_t r5 = SIG100_input_packet[5];
+		RC2_status.hub_voltage = SIG100_input_packet[2] << 4 | (r5 & 15);
+		r5 >>= 4;
+		RC2_status.hub_adc_temperature = SIG100_input_packet[3] << 4 | (r5 & 15);
+		Encoder_Pos = Get_uint16(SIG100_input_packet+6);
+		uint8_t r9 = SIG100_input_packet[9];
+		uint16_t rpm = SIG100_input_packet[8] << 3 | (r9 & 7);
+		if(Encoder_Pos > RC2_status.last_enc_pos) rpm = -rpm;
+		RC2_status.last_enc_pos = Encoder_Pos;
+		BL_enc_rpm = rpm/5;		/// To closest 50 rpm
+		RC2_status.enc_rpm = rpm;
+		RC2_status.dir_pin = ((r9 >> 6)& 1);
+		RC2_status.hub_dac0_v = SIG100_input_packet[4] << 2 | ((r9 >> 4) & 3);	// Splice high 8 bits with low 2 bits
+
+		SIG100_handle_stop_flags();
+
+		ADC_adjusted_temp = SIG100_input_packet[3];		// High order only for logging
+		BL_dac0_v   = SIG100_input_packet[4];
+
+		return true;
+
 
 	case '_':	// Normal 4 byte response packet
 		SIG100_rcv_pkt();
@@ -2147,21 +2214,77 @@ void SIG100_send_movement_pkt(char c)
 	Sig100_checksum_and_send_pkt(3);
 
 }
+
+void SIG100_send_RC2_command_pkt(void)
+{
+	BL_command = '?';
+	if(RC2_new_command == false) return;
+
+	RC2_new_command = false;		// Each command only used once
+	MotorDriveState new_dstate = MD_IDLE;
+	uint8_t rc2_subcommand=0;
+	switch(RC2_hub_command)
+	{
+	case RC2_HUB_COMMAND_PWM_COARSE:
+		BL_command = '+';			// For logging
+		rc2_subcommand = BL_command;
+		BL_speed = (RC2_cmd_val / 500) + 128;
+		if(RC2_cmd_val >= 2000)
+		{
+			new_dstate = MD_COARSER;
+		}
+		break;
+
+	case RC2_HUB_COMMAND_PWM_FINE:
+		BL_command = '-';			// For logging.
+		rc2_subcommand = BL_command;
+		BL_speed = (RC2_cmd_val / 500) + 128;
+		if(RC2_cmd_val >= 2000)
+		{
+			new_dstate = MD_FINER;
+		}
+		break;
+
+	case RC2_HUB_COMMAND_SPEED_COARSE:
+		BL_command = '+';			// For logging
+		rc2_subcommand = 'c';		// For coarse
+		BL_speed = (RC2_cmd_val / 100) + 128;
+		if(RC2_cmd_val >= 200)
+		{
+			new_dstate = MD_COARSER;
+		}
+		break;
+
+	case RC2_HUB_COMMAND_SPEED_FINE:
+		BL_command = '-';			// For logging
+		rc2_subcommand = 'f';		// For fine
+		BL_speed = (RC2_cmd_val / 100) + 128;
+		if(RC2_cmd_val >= 200)
+		{
+			new_dstate = MD_FINER;
+		}
+		break;
+
+	case RC2_HUB_COMMAND_SET_ANGLE:
+		BL_command = 'P';			// For positioning
+		rc2_subcommand = 'P';		// For position
+		BL_speed = 0;
+		break;
+
+	}
+	Set_dState(new_dstate,12345);		// So we get correct LEDS
+	SIG100_start_command();
+	Sig100_send_pkt[0]= '~';		// Special RC2 prefix
+	Sig100_send_pkt[1]= rc2_subcommand;
+	Put_int2(Sig100_send_pkt+2,RC2_cmd_val);
+	Sig100_checksum_and_send_pkt(5);
+}
+
 void SIG100_send_command_pkt(char c)
 {
 //	uint8_t bl_last_command = BL_command;
 	BL_command = (uint8_t)c;		// For logging...
 	BL_speed = Ctl_brushless_speed;
-
-
-	if(ps.parms[BL_DIAGNOSTICS] & P_BL_ACCEL_BOARD)	// MHH:18/10/2023. Add for vibration logic
-	{
-		if(TimeInSeconds != Time_in_secs_save)
-		{
-			Time_in_secs_save = TimeInSeconds;
-			c = 'V';			// Send a vibration command instead of what we are doing
-		}
-	}
 
 /*
  *
@@ -2502,6 +2625,11 @@ void SIG100_send_command(void)
     		//		c = (char) Get_SIG100_command_from_drive_pins();
     		if(op_mode == HOLD)
     		{
+    			if(RC2_mode)
+    			{
+    				SIG100_send_RC2_command_pkt();
+    				return;
+    			}
     			char c = RC_S_position_request();
     			if(c)
     			{

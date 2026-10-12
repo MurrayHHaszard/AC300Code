@@ -283,10 +283,15 @@ void AC210_ssp_flash_erase(uint32_t sector);
 
 void mh_debug();
 
+extern bool CAN_RC2_command_mode;
+
 extern int CAN_mode;
+
+#define CAN_MODE_NONE		0
 #define CAN_MODE_ROTAX		1
 #define CAN_MODE_RC			2
 #define CAN_MODE_SERIAL		3
+#define CAN_MODE_RC2		4
 
 int iround(float f);
 

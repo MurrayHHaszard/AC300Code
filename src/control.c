@@ -1755,8 +1755,8 @@ void Ctl_logic(void)
 			Set_cState(C_IDLE,1000);
 		}
 		break;
-	case C_BL_CONTROL:	// MHH:21/01/2026
-		break;
+//	case C_BL_CONTROL:	// MHH:21/01/2026
+//		break;
 	case C_BRAKE:	// dummy for compiler
 		break;
 	}
@@ -1872,7 +1872,10 @@ void controlCycle (void)
     PressureValue   mp;
 #endif
 
-
+    if(RC2_mode)
+    {
+    	RC2_mode = true;		// MHH:L03/10/2026. Debug.
+    }
 	if(TimeInSeconds == 0)
 	{
 		return;		// Ignore for first second.

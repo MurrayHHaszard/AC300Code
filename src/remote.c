@@ -34,6 +34,7 @@ Changes:
 #include "analog.h"
 #include "leds.h"
 #include "xoar.h"
+#include "turbotech.h"
 
 void RemotePos_ControlCycle(void);
 int AC200Enc_version;
@@ -1631,7 +1632,6 @@ void RC_S_setpos(void)
 //void setStateBits (WORD bits);
 extern uint8_t Soft_mode;		// ac210_drive.c
 extern bool Drive_wait_flag;
-
 void RC_S_brushless_terminate(void)	// MHH:20/02/2025
 {
 	Set_RC_S_mode(RC_S_MODE_C_IDLE,1302);
@@ -1644,12 +1644,13 @@ void RC_S_brushless_terminate(void)	// MHH:20/02/2025
     }
     controlDirection = C_IDLE;
 }
-
+void Remote_RC2_check_send_status(void);
 void RC_S_ControlCycle()
 {
     WORD sysState;
     WORD data_interval;
     OpMode op_mode;
+
 
     // Turn remote flag bits off.
 
@@ -1673,6 +1674,12 @@ void RC_S_ControlCycle()
 	    State_fast_test = false;
 		return;
 	}
+
+    if(RC2_mode)
+    {
+    	Remote_RC2_check_send_status();
+    	return;
+    }
 
     if(RC_S_restart_check == false)		// First time through?
     {
@@ -2904,6 +2911,187 @@ void RC_S_stop_move(void)
 	//		RC_S_set_count_zero();
 	RC_S_Status(RC_S_ERR_OK);
 }
+void Put16BigEndian(uint8_t *dst,int16_t ival)
+{
+	dst[0] = (ival >> 8);
+	dst[1] = (ival & 0xff);
+}
+
+void Remote_RC2_send_status1(void)
+{
+	// To start, just send some responses.
+
+	    CAN_snd_status_msg.ID = 0x9bf;
+	    CAN_snd_status_msg.Type = 0;		// Not CAN_REMOTE_MSG
+
+	    Put16BigEndian(CAN_snd_status_msg.Data+0,RC2_status.enc_rpm);
+
+	    Put16BigEndian(CAN_snd_status_msg.Data+2,0);		// INV_PITCH_Curr_dA: AC current on motor phases, not measured
+
+	    int dac0 = RC2_status.hub_dac0_v;		// A value between 0 & 1023
+	    int duty_pct = (dac0 * 1000 + 511) / 1023;
+	    if(RC2_status.dir_pin == 1) duty_pct = -duty_pct;
+	    Put16BigEndian(CAN_snd_status_msg.Data+4,(int16_t)duty_pct);
+
+	    if(RC2_status.hub_adc_temperature != RC2_status.hub_adc_last_temperature)
+	    {
+	    	RC2_status.hub_adc_last_temperature = RC2_status.hub_adc_temperature;
+	    	int temp_adc = RC2_status.hub_adc_temperature;	// get ADC measured value to 8 significant bits
+
+	    	//  We know lpc845 is 3.3V, so convert millivolts = 3300 * adc_v / 4096
+
+	    	int millivolts = (3300 * temp_adc) >> 12;
+	    	float ftemp = FLMT87_convert_millivolts_to_celcius(millivolts);
+	    	int temp = (int)(ftemp * 10 + 0.5F);
+	    	RC2_status.hub_temperature = temp;	// We want implied decimal place
+	    }
+	    Put16BigEndian(CAN_snd_status_msg.Data+6,(int16_t)RC2_status.hub_temperature);
+
+
+
+	#ifdef MH_XXX
+
+	    val = scaledValue (A_SUPPLY);		// Note 1 implied decimal place
+	    voltage = val;
+	    CAN_snd_status_msg.Data[2] = (voltage >> 8);
+	    CAN_snd_status_msg.Data[3] = voltage & 255;
+
+	    led_status = XoarStatus;
+	    CAN_snd_status_msg.Data[4] = (led_status >> 8);
+	    CAN_snd_status_msg.Data[5] = led_status & 255;
+
+	    float angle = AC210_SIG100_angle();
+	//    angle = angle * CAN_ANGLE_DIVISOR + 0.5F;		// 1 implied decimal place
+	    angle = angle * CAN_ANGLE_DIVISOR;		// 1 implied decimal place
+	    iangle = (int16_t)iround(angle);
+	    CAN_snd_status_msg.Data[6] = (iangle >> 8);
+	    CAN_snd_status_msg.Data[7] = iangle & 255;
+	#endif
+
+	    CAN_snd_status_msg.DLC = 8;		// Message length = 8 bytes
+
+	    CAN_send_status();
+}
+void Remote_RC2_send_status2(void)
+{
+	// To start, just send some responses.
+
+	    CAN_snd_status_msg.ID = 0xebf;
+	    CAN_snd_status_msg.Type = 0;		// Not CAN_REMOTE_MSG
+	    CAN_snd_status_msg.DLC = 8;		// Message length = 8 bytes
+
+	    int16_t motor_current = (scaledValue (A_MOTOR_CURRENT)/100);	// INV_PITCH_Currin_dA: DC current from battery to inverter
+	    Put16BigEndian(CAN_snd_status_msg.Data+0,motor_current);
+
+	    Put16BigEndian(CAN_snd_status_msg.Data+2,RC2_status.hub_voltage/10);
+
+	    uint16_t error_word = 0;
+		uint8_t stop_flags = RC2_status.flags;
+		stop_flags <<= 4;	// To be consistent with existing logic
+
+		if(stop_flags & S_STOP_COARSE)	error_word = 30;
+		if(stop_flags & S_STOP_FINE) error_word = 31;
+		if(Hub_pos_error) error_word = 33;
+
+	    Put16BigEndian(CAN_snd_status_msg.Data+4,error_word);
+
+	    float angle = AC210_SIG100_angle();
+	    angle = angle * CAN_ANGLE_DIVISOR;		// 1 implied decimal place
+	    int16_t iangle = (int16_t)iround(angle);
+	    Put16BigEndian(CAN_snd_status_msg.Data+6,iangle);
+
+	    CAN_send_status();
+}
+uint8_t RC2_status_ticks_left;
+uint8_t RC2_command;
+uint8_t RC2_hub_command;
+bool RC2_new_command=false;
+bool RC2_send_reply=false;
+bool RC2_mode = false;
+int32_t RC2_cmd_val;
+void Remote_RC2_check_send_status(void)
+{
+	if(RC2_status_ticks_left == 0)
+	{
+		RC2_mode = false;
+		return;
+	}
+	RC2_status_ticks_left--;
+	if(RC2_send_reply)		// Only reply if we received a message
+	{
+		RC2_send_reply = false;
+		Remote_RC2_send_status1();
+		Remote_RC2_send_status2();
+	}
+}
+
+int32_t GetInt24BigEndian(uint8_t *pdata)
+{
+	uint32_t result = (pdata[0] << 16) | (pdata[1] << 8) | pdata[2];
+	return result;
+}
+int16_t GetInt16BigEndian(uint8_t *pdata)
+{
+	uint16_t result = (pdata[0] << 8) | pdata[1];
+	return result;
+}
+extern int CAN_rcv_millisecs;
+int Sig100_pos_from_angle(float angle);
+void Remote_RC2_process_cmd(void)
+{
+//	PRINTF("%d ",CAN_rcv_millisecs);		// Debug
+
+	RC2_status_ticks_left = 50;
+	RC2_mode = true;
+	RC2_new_command = true;		// So we will send a command to hub.
+	RC2_send_reply = true;
+	RC2_command = CAN_rcv_command_msg.Data[0];
+
+	int32_t pwm_val;
+	int16_t speed_val;
+	int16_t angle_val;
+
+	switch(RC2_command)
+	{
+	case RC2_PWM_COMMAND:
+		pwm_val =  GetInt24BigEndian(CAN_rcv_command_msg.Data+1);
+		if(pwm_val > 100000) pwm_val = 100000;
+		pwm_val -= 50000;
+		if(pwm_val >= 0)
+		{
+			RC2_hub_command = RC2_HUB_COMMAND_PWM_COARSE;
+			RC2_cmd_val = pwm_val;
+		}
+		else
+		{
+			RC2_hub_command = RC2_HUB_COMMAND_PWM_FINE;
+			RC2_cmd_val = -pwm_val;
+		}
+		break;
+
+	case RC2_SPEED_COMMAND:
+		speed_val = GetInt16BigEndian(CAN_rcv_command_msg.Data+2);
+		if(speed_val >= 0)
+		{
+			RC2_hub_command = RC2_HUB_COMMAND_SPEED_COARSE;
+			RC2_cmd_val = speed_val;
+		}
+		else
+		{
+			RC2_hub_command = RC2_HUB_COMMAND_SPEED_FINE;
+			RC2_cmd_val = -speed_val;
+		}
+		break;
+
+	case RC2_ANGLE_COMMAND:
+		angle_val = GetInt16BigEndian(CAN_rcv_command_msg.Data+2);
+		RC2_hub_command = RC2_HUB_COMMAND_SET_ANGLE;
+		float fangle = (float)angle_val;
+		fangle /= 100;
+		RC2_cmd_val = Sig100_pos_from_angle(fangle);	// Convert angle to encoder pos
+		break;
+	}
+}
 
 void checkRemoteCANcommand(void)
 {
@@ -2913,6 +3101,12 @@ void checkRemoteCANcommand(void)
 	if(CAN_new_command == false) return;
 
 	CAN_new_command = false;
+
+	if(CAN_mode == CAN_MODE_RC2)
+	{
+		Remote_RC2_process_cmd();
+		return;
+	}
 
 	/*
 	 *       CAN_transmit_rec.ID = CAN_ID_MOVE_FINE;

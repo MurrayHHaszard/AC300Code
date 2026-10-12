@@ -145,20 +145,55 @@ int CanRingMsgReady(CanRingBuf_t *crb)
 
 
 // Note: CAN IDs must be in ascending order
-CAN_STD_ID_ENTRY_T SFFSection[] = {
 //	{CAN_CTRL_NO, 0, CA_RPM_A},
 //	{CAN_CTRL_NO, 0, CA_FUELFLOW_A},
 //	{CAN_CTRL_NO, 0, CA_MAP_A},
 //	{CAN_CTRL_NO, 0, CA_RPM_B},
 //	{CAN_CTRL_NO, 0, CA_FUELFLOW_B},
 //	{CAN_CTRL_NO, 0, CA_MAP_B},
+
+
+
+CAN_STD_ID_ENTRY_T SFFSection[] = {
 	{CAN_CTRL_NO, 0, CA_THROTTLE_A},
 	{CAN_CTRL_NO, 0, CA_THROTTLE_B},
 };
+
 CANAF_LUT_T AFSections = {
 	NULL, 0,
 	SFFSection, sizeof(SFFSection) / sizeof(CAN_STD_ID_ENTRY_T),
 };
+
+/*
+ * MHH:04/10/2026. Acceptance filter for extended.
+ */
+CAN_EXT_ID_ENTRY_T EFFSection_RC2[] =
+{
+    { CAN_CTRL_NO, 0xbfUL },
+};
+
+CAN_EXT_ID_ENTRY_T EFFSection_SER[] =
+{
+    { CAN_CTRL_NO, 0x9bfUL },
+    { CAN_CTRL_NO, 0xEbfUL },
+};
+
+
+
+CANAF_LUT_T AFSections2 =
+{
+    NULL, 0,   // No FullCAN entries
+    NULL, 0,   // No standard-ID entries
+    NULL, 0,   // No standard-ID range entries
+
+    EFFSection_RC2,
+    sizeof(EFFSection_RC2) / sizeof(EFFSection_RC2[0]),
+
+    NULL, 0    // No extended-ID range entries
+};
+
+
+
 #endif /*AF_LUT_USED*/
 
 /*****************************************************************************
@@ -446,6 +481,34 @@ void CAN_process_rc_message(void)
 	}
 }
 //------------------------------------------------------------------------------------------
+int CAN_rcv_millisecs;
+TIMER_t CAN_rcv_timer;
+bool CAN_RC2_command_mode=false;
+void CAN_wait_RC2_command(void)
+{
+	uint32_t save_systick = sysTick;
+	while(true)
+	{
+		if(CAN_new_command) return;
+		if((sysTick - save_systick) > 10)		// 200 millisecs
+		{
+			CAN_RC2_command_mode = false;
+			return;
+		}
+	}
+}
+void CAN_process_rc2_message(void)
+{
+	if(CAN_rcv_msg.ID == 0xbf)
+	{
+		CAN_rcv_command_msg = CAN_rcv_msg;		// Not sure if this will work, may need to memcpy.
+		CAN_new_command = true;
+		CAN_rcv_millisecs = Timer_read_ms(&CAN_rcv_timer);
+		Timer_reset(&CAN_rcv_timer);
+		CAN_RC2_command_mode = true;
+	}
+}
+//------------------------------------------------------------------------------------------
 void CAN_convert_to_serial(void);
 static void CAN_process_message(void)
 {
@@ -457,9 +520,15 @@ static void CAN_process_message(void)
 	case CAN_MODE_RC:
 		CAN_process_rc_message();
 		break;
+
+	case CAN_MODE_RC2:
+		CAN_process_rc2_message();
+		break;
+
 	case CAN_MODE_SERIAL:
 		CAN_convert_to_serial();
 		break;
+
 	}
 }
 //------------------------------------------------------------------------------------------
@@ -485,6 +554,15 @@ void CAN_IRQHandler(void)
 	if (IntStatus & CAN_ICR_RI) {
 		if(Chip_CAN_Receive(LPC_CAN, &CAN_rcv_msg))
 		{
+			if (CAN_rcv_msg.ID & CAN_EXTEND_ID_USAGE)
+			{
+			    CAN_rcv_msg.ID &= 0x1FFFFFFFUL;	  // Extended frame: process id29 and rx data
+//				if(S_Pkt.Mode == SERIAL_MODE_ASCII) PRINTF("CxID:%04x\r\n",CAN_rcv_msg.ID);
+			}
+			else
+			{
+//				if(S_Pkt.Mode == SERIAL_MODE_ASCII) PRINTF("Cid:%04x\r\n",CAN_rcv_msg.ID);
+			}
 			CAN_process_message();
 		}
 
@@ -565,20 +643,31 @@ void AC210_CAN_Init(int baudrate,int can_mode)
 //	int status = Chip_CAN_SetBitRate(LPC_CAN, baudrate);
 //	PRINTF("status=%d\r\n",status);
 //	Chip_CAN_SetBitRate(LPC_CAN, 125000);
-	Chip_CAN_EnableInt(LPC_CAN, CAN_IER_BITMASK);
 
 //	SetupAFLUT();
-	if(can_mode == CAN_MODE_ROTAX)
+	switch(can_mode)
 	{
-//		PRINTF("CAN Rotax\r\n");
+	case CAN_MODE_ROTAX:
 		Chip_CAN_SetAFLUT(LPC_CANAF, LPC_CANAF_RAM, &AFSections);
 		Chip_CAN_SetAFMode(LPC_CANAF, CAN_AF_NORMAL_MODE);
-	}
-	else
-	{
-//		PRINTF("CAN RC\r\n");
+		break;
+
+	case CAN_MODE_RC2:
+		if(ps.parms[REMOTE_COMMS_TYPE] == REMOTE_COMMS_CAN)	// CAN->Serial converter?
+		{
+			AFSections2.EffEntryNum =  sizeof(EFFSection_SER) / sizeof(EFFSection_SER[0]);
+			AFSections2.EffSec = EFFSection_SER;
+		}
+		Chip_CAN_SetAFLUT(LPC_CANAF, LPC_CANAF_RAM, &AFSections2);
+		Chip_CAN_SetAFMode(LPC_CANAF, CAN_AF_NORMAL_MODE);
+		break;
+
+	default:
 		Chip_CAN_SetAFMode(LPC_CANAF, CAN_AF_BYBASS_MODE);	// Note: 'bypass' mis-spelt in header
+		break;
 	}
+	Chip_CAN_EnableInt(LPC_CAN, CAN_IER_BITMASK);
+
 
 //	ChangeAFLUT();
 //	PrintAFLUT();
@@ -638,13 +727,14 @@ CAN_data_to_send[3] = (byte)(CAN_transmit_rec.ID & 0xff); // Bigendian
 CAN_data_to_send[4] = (byte)(CAN_transmit_rec.DLC & 0xf); // Only
  *
  */
-TIMER_t CAN_timer;
+TIMER_t CAN_send_timer;
+
 int CAN_send_timeouts;
 int CAN_send_count=0;
 int CAN_Send(void)
 {
 	CAN_BUFFER_ID_T   TxBuf;
-
+	if(AC210_remote_control_port == 3) CAN_snd_msg.ID |= CAN_EXTEND_ID_USAGE;		// MHH:30/09/2026
 	CAN_send_count++;
 //	PRINTF("CAN_send_count:%d\r\n",CAN_send_count);	// MHH:29/05/2025. Debug only !!!
 
@@ -657,10 +747,10 @@ int CAN_Send(void)
 	/*
 	 * Note: For following line to work, there must be at least one other CAN node!!!!!
 	 */
-	Timer_reset(&CAN_timer);
+	Timer_reset(&CAN_send_timer);
 	while ((Chip_CAN_GetStatus(LPC_CAN) & CAN_SR_TCS(TxBuf)) == 0)
 	{
-		int msecs = Timer_read_ms(&CAN_timer);
+		int msecs = Timer_read_ms(&CAN_send_timer);
 		if(msecs > 20)
 		{
 			CAN_send_timeouts++;
@@ -676,15 +766,110 @@ void CAN_send_init(void)
 	int baudrate = ps.parms[RC_BAUDRATE];
 	if(baudrate == 0)  baudrate = 125;
 	baudrate *= 1000;
-	AC210_CAN_Init(baudrate,CAN_MODE_RC);		// May need to differentiate from CANAero. Eg not setup FLUT
+	int can_mode = CAN_MODE_RC;
+	if(AC210_remote_control_port == 3) can_mode = CAN_MODE_RC2;
+	AC210_CAN_Init(baudrate,can_mode);		// May need to differentiate from CANAero. Eg not setup FLUT
 
 
 //	AC210_CAN_Init(125000,CAN_MODE_RC);
-	Timer_start(&CAN_timer);
+	Timer_start(&CAN_send_timer);
+	Timer_start(&CAN_rcv_timer);
 }
 extern BYTE codeEntered;
-int CANProcessCommand(char *rxbuff,int rxcount)
+//-----------------------------------------------------------------------------------------------
+extern volatile bool AC210_wait;
+uint8_t PC_can_check_mode=0;
+uint8_t PC_can_rcv_ix;
+uint8_t PC_can_rcv_max;
+#define PC_CAN_RCV_MAX		20
+uint8_t PC_rcv_can_pkt[PC_CAN_RCV_MAX];
+int CANProcessCommand(uint8_t *rxbuff);
+
+void PC_CAN_check(void)
 {
+	if(S_Pkt.Mode != SERIAL_MODE_CAN) return;
+	int c;
+
+	while(AC210_wait)
+	{
+		switch(PC_can_check_mode)
+		{
+		case 0:
+			c = PC_getc();
+			if(c == -1) return;
+			if(c == 'C')		// First byte of packet?
+			{
+				PC_can_check_mode++;
+				PC_can_rcv_ix = 0;
+				PC_rcv_can_pkt[PC_can_rcv_ix++] = c;
+			}
+			break;
+
+		case 1:
+			c = PC_getc();
+			if(c == -1) return;
+			if(c == 'X' || c == 'x')	// if 'x' then has checksum
+			{
+				PC_can_check_mode++;
+				PC_rcv_can_pkt[PC_can_rcv_ix++] = c;
+			}
+			else
+			{
+				PC_can_check_mode = 0;
+			}
+			break;
+		case 2:
+			c = PC_getc();
+			if(c == -1) return;
+			PC_rcv_can_pkt[PC_can_rcv_ix++] = c;
+			if(PC_can_rcv_ix >= 5)
+			{
+				if(c > 8)
+				{
+					PC_can_check_mode = 0;
+					return;
+				}
+				PC_can_check_mode++;
+				PC_can_rcv_max = c + 5;
+				if(PC_rcv_can_pkt[1] == 'x') PC_can_rcv_max++;	// Checksum
+			}
+			break;
+		case 3:
+			c = PC_getc();
+			if(c == -1) return;
+			PC_rcv_can_pkt[PC_can_rcv_ix++] = c;
+			if(PC_can_rcv_ix >= PC_can_rcv_max)
+			{
+				PC_can_check_mode++;
+			}
+			break;
+
+		case 4:		// Looks like we have a valid packet. Try CAN sending...
+			PC_can_check_mode = 0;
+			CANProcessCommand(PC_rcv_can_pkt);
+			return;
+		}
+	}
+}
+uint8_t PC_CAN_checksum(uint8_t *rxbuff,int ilen)
+{
+	uint8_t checksum = 0;
+	for(int i=0;i<ilen;i++) checksum += rxbuff[i];
+	return checksum;
+}
+
+int PC_CAN_bad_receives=0;
+int CANProcessCommand(uint8_t *rxbuff)
+{
+	if(rxbuff[1] == 'x')
+	{
+		if(PC_CAN_checksum(rxbuff,PC_can_rcv_ix))
+		{
+			PC_CAN_bad_receives++;
+			return 0;
+		}
+	}
+
 	if(CAN_init == false)
 	{
 		CAN_send_init();
@@ -696,13 +881,13 @@ int CANProcessCommand(char *rxbuff,int rxcount)
 	{
 		S_Pkt.Mode = SERIAL_MODE_ASCII;
 		S_Pkt.Pkt_Head_0 = 254;
-		CAN_mode = CAN_MODE_RC;			// So we stop processing CAN data from AC300 controllers
+		CAN_mode = CAN_MODE_NONE;			// So we stop processing CAN data from AC300 controllers
 		// Perhaps should send equivalent of RC_S=0 ??
 		AC210_PC_ChangeBaud(19200);		// In case we were at 115.2k
 		codeEntered = 0;				// Same as ATBYE
 		return 2;		// So we can exit loop
 	}
-
+//	if(AC210_remote_control_port == 3) CAN_snd_msg.ID |= CAN_EXTEND_ID_USAGE;		// MHH:29/09/2026
 	CAN_snd_msg.DLC = rxbuff[4];
 	CAN_snd_msg.Type = 0;		// Not CAN_REMOTE_MSG
 	for(int i=0;i<CAN_snd_msg.DLC;i++)
@@ -737,7 +922,7 @@ void CAN_convert_to_serial(void)		// Here if we are converting CAN to serial
 	 */
 
 	CAN_txbuff[0] = 'C';
-	CAN_txbuff[1] = 'R';
+	CAN_txbuff[1] = 'r';
 	CAN_txbuff[2] = CAN_rcv_msg.ID >> 8;
 	CAN_txbuff[3] = CAN_rcv_msg.ID & 255;
 	CAN_txbuff[4] = (uint8_t)CAN_rcv_msg.DLC;
@@ -746,6 +931,8 @@ void CAN_convert_to_serial(void)		// Here if we are converting CAN to serial
 		CAN_txbuff[5+i] = CAN_rcv_msg.Data[i];
 	}
 	int len = 5 + CAN_rcv_msg.DLC;
+	uint8_t checksum =  PC_CAN_checksum(CAN_txbuff,len);
+	CAN_txbuff[len++] = -checksum;
 	for(int i=0;i<len;i++)		// Now send as serial message
 	{
 		PC_putc(CAN_txbuff[i]);

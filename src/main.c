@@ -429,8 +429,6 @@ const unsigned char Version_id[]={'X','X',':','V',':',0,VERSION/256,VERSION&255,
 
 volatile BYTE waiting;
 // ticks counts up to 49, (1 seconds worth) so we can flash at 1 Hz
-BYTE timerTick;
-ULONG TimeInSeconds;
 WORD debug;
 
 // Flags the 0.5 second state dump
@@ -712,27 +710,7 @@ BYTE timerTicks (void)
 {
     return (timerTick);
 }
-#ifndef AC210_PORT
-#pragma INTERRUPT mainTimer
-#endif
-void mainTimer (void)
-{
-    // main timer interrupt, goes off 50 times per second
-    // and is used to control main loop
 
-	TimerCount++;
-	if(mainTimerLimit == 0)	// Normal path
-	{
-    	waiting = 0;
-		return;
-	}
-	mainTimerCount++;	// This gives option of slowing for debug
-	if(mainTimerCount >= mainTimerLimit)
-	{
-		waiting = 0;
-		mainTimerCount = 0;
-	}
-}
 int LMT87_convert_millivolts_to_celcius(int millivolts);
 extern WORD Auto_index;
 extern WORD Auto_throttle;
@@ -914,7 +892,6 @@ void dumpState (int type)
     		}
     	}
     }
-
 }
 //-------------------------------------------------------------
 const float Cf433 = 0.00433;
@@ -923,6 +900,16 @@ const float Cf1358 = 13.582;
 int LMT87_convert_millivolts_to_celcius(int millivolts)
 {
 	int temp_celcius;
+
+	temp_celcius = (int)(FLMT87_convert_millivolts_to_celcius(millivolts)+ 0.5);
+
+	return temp_celcius;
+}
+
+
+float FLMT87_convert_millivolts_to_celcius(int millivolts)
+{
+	float temp_celcius;
 
 	float Vtemp = millivolts;
 
@@ -934,8 +921,7 @@ int LMT87_convert_millivolts_to_celcius(int millivolts)
 	float exp4 = Cf1358 - exp3;
 	float exp5 = 2 * (-Cf433);
 	float exp6 = exp4/exp5 + 30;
-	temp_celcius = (int)(exp6 + 0.5);
-
+	temp_celcius = exp6;
 	return temp_celcius;
 }
 int LMT87_convert_celcius_to_millivolts(int celcius)
@@ -1041,17 +1027,6 @@ void Delay_ms(WORD ms)
 #endif
 }
 //extern uint32_t RTC_secs;
-//--------------------------------------------------------------------------------------------
-uint32_t TimeInTicks;
-static void IncrementTimer(void)
-{
-	if (++timerTick > 49)
-	{
-		timerTick = 0;
-		TimeInSeconds++;
-	}
-	TimeInTicks++;
-}
 // --------------------------------------------------------------------------------------------
 void checkForAllCommands(void)
 {
@@ -1171,7 +1146,7 @@ void main(void)
 
             watchIt(WD_MAIN+35);
 
-            IncrementTimer();
+//            IncrementTimer();
 
             waiting = 1;
             AC2_TEST_stage();
@@ -1217,7 +1192,7 @@ void main(void)
 
         watchIt(WD_MAIN+40);
 
-        IncrementTimer();
+//        IncrementTimer();
 
         waiting = 1;
 

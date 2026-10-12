@@ -292,10 +292,20 @@ void HardFault_Handler(void)
 	AC210_reboot();
 //	NVIC_SystemReset();
 }
+//--------------------------------------------------------------------------------------------
+uint32_t TimeInTicks;
+ULONG TimeInSeconds;
+BYTE timerTick;
 //--------------------------------------------------------------------------------------------------------------
 void SysTick_Handler(void)
 {
 	sysTick++;		// Called 50 times per second
+	if (++timerTick > 49)
+	{
+		timerTick = 0;
+		TimeInSeconds++;
+	}
+	TimeInTicks++;
 	if(AC210_watchdog_active)
 	{
 		if(--AC210_watchdog_count <= 0)
@@ -303,16 +313,21 @@ void SysTick_Handler(void)
 			AC210_Watchdog_Reset();
 		}
 	}
-	if(sysTick % 25 == 0) { 		// twice a second
+	if(sysTick % 25 == 0)
+	{ 		// twice a second
 		MagTimer_Check_RPM();		// make sure we are still getting readings from Mag sensor input.
-	}
-	if(sysTick % 50 == 0)
-	{
-		RTC_secs++;
+
+		if(sysTick % 50 == 0)
+		{
+			RTC_secs++;
+		}
 	}
 
+
 	AC210_wait = false;
+#ifdef MH_FIND_IDLE
 	AC210_usecs_at_tick = us_ticker_read();	// May be useful understanding what % of CPU is idle
+#endif
 }
 //-------------------------------------------------------------------------------------------------------------
 // MHH:29/05/2025. Attempt to find CAN receive bug
@@ -330,48 +345,37 @@ void ADC_CheckPower(void);
 void RPM_Check(void);
 // Use wait time to do any checks
 void mainTimer (void);		// defined in main.c
+void PC_CAN_check(void);
+extern uint8_t PC_can_check_mode;
+void CAN_wait_RC2_command(void);
+
 void p_Wait(void)
 {
+#ifdef MH_FIND_IDLE
+
 	uint32_t working_usecs = us_ticker_read() - AC210_usecs_at_tick;
 	uint32_t idle_usecs = AC210_USECS_PER_TICK - working_usecs;
 	uint32_t idle_percent2d = (idle_usecs * 10000)/AC210_USECS_PER_TICK;
 	AC210_idle_percent2d = (((AC210_idle_percent2d * 9) + idle_percent2d)+5)/10;	// filter
-
+#endif
 
 	if(AC210_watchdog_active == false)
 	{
 		 AC210_watchIt(WD_AC210);				// In case was disabled by any routine
 	}
 
-// By knowing how many idle usecs we have before next SysTick interrupt we can decide if we want to
-// do anything while waiting. fState Feather_mode fState dState
-
-#ifdef MH_OLD_ERASE
-	if((sysTick % 100) == 0)
+	if(CAN_RC2_command_mode)
 	{
-//		float f_idle_percent = (float)(AC210_idle_percent2d)/100.0;
-//		printf("p_Wait:Idle percent: %4.1f\r\n",f_idle_percent);
+		CAN_wait_RC2_command();
 	}
-	AC210_log_check_erase_sector();
-#endif
-
-	while(AC210_wait)
+	else
 	{
-#ifdef MH_DEBUG_RPM
-		if(WaitFlags) {
-			if(WaitFlags & FLAG_CHECK_POWER) {
-				WaitFlags &= ~FLAG_CHECK_POWER;
-				ADC_CheckPower();
-			}
-			if(WaitFlags & FLAG_CHECK_RPM) {
-				WaitFlags &= ~FLAG_CHECK_RPM;
-				RPM_Check();
-			}
+		while(AC210_wait)
+		{
+			PC_CAN_check();
 		}
-#endif
 	}
 	AC210_wait = true;
-	mainTimer();		// Set flag for AC200 main
 }
 
 

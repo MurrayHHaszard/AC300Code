@@ -910,7 +910,7 @@ void updateLEDS (void)
 
     // if Remote connection then Blink RED once every 2 seconds.
 
-    if(LED_overlay_flags & (LED_OVERLAY_FLAG_REMOTE_ACTIVE | LED_OVERLAY_FLAG_AUTOGYRO_ACTIVE))
+    if((LED_overlay_flags & (LED_OVERLAY_FLAG_REMOTE_ACTIVE | LED_OVERLAY_FLAG_AUTOGYRO_ACTIVE)) || CAN_RC2_command_mode)
     {
     	if(TimeInSeconds & 1)
     	{

@@ -29,7 +29,7 @@ typedef enum
     C_FINER,
     C_COARSER,
     C_BRAKE,
-	C_BL_CONTROL
+//	C_BL_CONTROL
 } ControlState;
 extern ControlState cState;	// For SIG100
 // initialisation

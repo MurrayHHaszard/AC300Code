@@ -45,6 +45,7 @@ extern WORD rawValues[A_MAX];
 BYTE betaSwitchOn (void);
 
 int LMT87_convert_millivolts_to_celcius(int millivolts);
+float FLMT87_convert_millivolts_to_celcius(int millivolts);
 
 #endif
 

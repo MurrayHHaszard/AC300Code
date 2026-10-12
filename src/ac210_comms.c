@@ -257,6 +257,7 @@ void Aux2_putc(char ch)
 //	char buf[2];
 //	buf[0] = ch;
 //	Chip_UART_SendRB(LPC_UART2, &U2_txring, &ch, 1);
+	if(AC210_remote_control_port >= 2) return;		// CAN enabled?
 	Send_serial(LPC_UART2,&U2_txring,&ch,1);
 #else
 
@@ -1005,7 +1006,6 @@ int PC_getc(void)
 	return UartGetRingByte(&Uart0InputRB);
 #endif
 }
-
 // Note: We cannot have a PC_getc because LPC_UART0 is a special case and all input characters are sent via
 // rxProcessChar(c) (comms.c) to rxBuf.
 #ifdef MH_XXX
@@ -1257,6 +1257,7 @@ void Aux_ChangeBaud(int baud_rate)
 #endif
 //=========================================================================
 uint8_t AC210_remote_control_port=0;
+void CAN_send_init(void);
 int AC210_SerialInit(void)
 {
 
@@ -1275,7 +1276,12 @@ int AC210_SerialInit(void)
 #endif
 
 	InitUARTn(0,19200);
-	if((ps.parms[REMOTE_COMMS_TYPE] == REMOTE_COMMS_STANDARD) || AC210_remote_control_board)
+	if(ps.parms[RC_MISC_OPTIONS] & 1)
+	{
+		AC210_remote_control_board = true;		// MHH:03/11/2023. RC_BOARD should be redundant now, was only added when no pin to identify RC board
+//		Chip_IOCON_PinMuxSet(LPC_IOCON,PIN_DEF2(AC210_ADC5_TEMPERATURE_PIND),IOCON_MODE_INACT | IOCON_FUNC3); /* P1.31, 20, AD0.5, also used to output a MagInt signal for test */
+	}
+	if((ps.parms[REMOTE_COMMS_TYPE] == REMOTE_COMMS_STANDARD) || (ps.parms[REMOTE_COMMS_TYPE] == REMOTE_COMMS_CAN)|| AC210_remote_control_board)
 	{
 		AC210_remote_control_port = ps.parms[RC_PORT];
 	}
@@ -1296,10 +1302,8 @@ int AC210_SerialInit(void)
 		break;
 
 	case 2:						// CAN port used for RC commands
-		baudrate = ps.parms[RC_BAUDRATE];
-		if(baudrate == 0)  baudrate = 125;
-		baudrate *= 1000;
-		AC210_CAN_Init(baudrate,CAN_MODE_RC);		// May need to differentiate from CANAero. Eg not setup FLUT
+	case 3:						// MHH:29/09/2026. CAN port with extended packets for Turbotech.
+		CAN_send_init();
 		break;
 
 	}

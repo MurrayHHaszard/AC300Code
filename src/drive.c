@@ -300,13 +300,14 @@ void setDrive ( ControlState control)
         SetDrivePins(DRIVE_COARSE);
         break;
     case C_BRAKE:
-    case C_BL_CONTROL:	// Just added to stop compiler error
+//    case C_BL_CONTROL:	// Just added to stop compiler error
     	break;
     }
 }
 #endif
 //------------------------------------------------
 extern bool BL_no_dstate_changes;
+//#define MH_DISPLAY_DSTATE
 //#define MH_DISPLAY_DSTATE
 #ifdef MH_DISPLAY_DSTATE
 char *MD_desc[]=
@@ -337,7 +338,7 @@ void Set_dState(MotorDriveState new_dstate,int ifrom)
 		desc = MD_desc[ix];
 	}
 
-	DPRINTF("Set_dState:MD_%s from:%d\r\n",desc,ifrom);		// MHH:27/05/2024
+	PRINTF("Set_dState:MD_%s from:%d\r\n",desc,ifrom);		// MHH:27/05/2024
 #endif
 //    WORD motorCurrent = scaledValue (A_MOTOR_CURRENT);
 
@@ -420,6 +421,7 @@ void updateDriveControl (void)
     WORD errorVal, minMotor, maxMotor, pwmVal;
     MotorDriveState newState = MD_IDLE;
     BYTE in_control;
+    if(CAN_RC2_command_mode) return;
 
     if (overCurrentTrip)
     {
@@ -436,12 +438,13 @@ void updateDriveControl (void)
 
     // get the command from the PI control
     command = controlState (&errorVal);
+#ifdef MH_XXX
     if(command == C_BL_CONTROL)	// MHH:16/05/2023. Need to check overcurrent logic...
     {
     	Set_cState(C_IDLE,2000);
     	return;
     }
-
+#endif
 
     if(Ctl_rpm_per_tick_x10)	// MHH:24/02/2018. RemotePos_Active test redundant.
     {

@@ -947,7 +947,13 @@ Added
  *
  *
  */
-#define SUBVERSION			172			// MHH:17/09/2026
+//#define SUBVERSION			172			// MHH:17/09/2026
+/*
+ * MHH:13/10/2026. Numerous changes to allow CAN support for TurboTech protocol. Note that AC300 can now go into slave mode and be driven by CAN commands.
+ *                 See AC300RemoteTestCAN2 for example C# program using protocol.
+ */
+
+#define SUBVERSION			173			// MHH:13/10/2026
 #define VERSION	(10000+SUBVERSION)		// MHH:15/05/2024
 
 #define PCB_VERSION_MULTIPLIER	100000			// MHH:15/10/2024

@@ -491,7 +491,7 @@ void loadParameters (void)
 			    }
 
 			    if(ps.parms[RC_MISC_OPTIONS] == 65535) ps.parms[RC_MISC_OPTIONS] = 0;	// MHH:22/02/2025
-			    if(ps.parms[RC_PORT] >2) ps.parms[RC_PORT] = 0;	// MHH:21/02/2025
+			    if(ps.parms[RC_PORT] >3) ps.parms[RC_PORT] = 0;	// MHH:28/09/2026. Allow type 3 = extended CAN
 			    if(ps.parms[RC_BAUDRATE] == 65535) ps.parms[RC_BAUDRATE] = 0;	// MHH:21/02/2025
 			    if(ps.parms[RC_PROPNUM] == 65535) ps.parms[RC_PROPNUM] = 1;	// MHH:10/03/2025
 
@@ -1077,10 +1077,11 @@ BYTE setParameter ( ParamIndex idx, WORD nval)
     	break;
 
     case RC_PORT:
-    	rval = (nval <= 2);			// Only 0 or 1 or 2.
+    	rval = (nval <= 3);			// Only 0 or 1=Aux.Serial,2 CAN standard, 3 = CAN Extended for Turbotech.
     	break;
 
     case RC_BAUDRATE:
+#ifdef MH_XXX
     	rval = false;
     	if(nval == 0) rval = true;		// Default = 19,200 Serial, maybe CANAero default if CAN?
     	if(nval == 192) rval = true;	// Serial baud rate / 100
@@ -1089,6 +1090,8 @@ BYTE setParameter ( ParamIndex idx, WORD nval)
     	if(nval == 250) rval = true;		// CAN baud rate divided by 1000
     	if(nval == 500) rval = true;		// CAN baud rate divided by 1000
     	if(nval == 1000) rval = true;		// Add other rates as needed. Could put in a readonly table...
+#endif
+    	rval = true;		// MHH:29/09/2026. Allow anything.
     	break;
 
     case RC_PROPNUM:
