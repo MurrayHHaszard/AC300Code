@@ -408,7 +408,8 @@ int ee_check_logctl_ini()
 		{
 			if(cnt_255++ == 0)
 			{
-				start_erased_pos = AC210_log.getc_pos2 - 1;
+//				start_erased_pos = AC210_log.getc_pos2 - 1;
+				start_erased_pos = AC210_log.getc_pos2;		// MHH:02/11/2026. In some cases the last valid byte written might be a 255, so always pad with a 255.
 			}
 			if(cnt_255 > FLASH_PAGE_SIZE)
 			{
@@ -1461,16 +1462,18 @@ void ee_output_buffer(int page)
 //#define AC210_EELOG_HEADER_PAGES			4
 void AC300_RS232_exit(void);
 
-void ee_dump_finish(void)
+void ee_dump_finish(bool send_plog)
 {
 	if(Diags_RS232_page_logic)			// Need a flag to indicate Diagnostics can handle it
 	{
 		AC300_RS232_exit();
 	}
-
-	txDebug(":A:PLOG\r\n");
-	AC210_plog_display(1);
-	txDebug(":A:EOF\r\n");
+	if(send_plog && !Diags_page_abort)	// MHH:16/10/2026. Claude 14/11/2026: not if the transfer failed
+	{
+		txDebug(":A:PLOG\r\n");
+		AC210_plog_display(1);
+		txDebug(":A:EOF\r\n");
+	}
 }
 void ee_dump_all_pages(void)
 {
@@ -1503,6 +1506,13 @@ void ee_dump_all_pages(void)
 	pos = 0;
 	for(int page=0;page<=file_pages;page++)
 	{
+		if(Diags_page_abort) break;		// Claude 14/11/2026. Binary transfer failed
+		if(Diags_page_skip > 0)			// Claude 14/11/2026. Resume (ATXSKIP): the PC has this page, don't read it
+		{
+			Diags_page_skip--;
+			pos += EELOG_PAGESIZE;
+			continue;
+		}
 #ifdef MH_VERBOSE
 		printf("FilePage:%d\r\n",page);
 #endif
@@ -1515,7 +1525,7 @@ void ee_dump_all_pages(void)
 		ee_output_buffer(page);
 		pos += EELOG_PAGESIZE;
 	}
-	ee_dump_finish();
+	ee_dump_finish(true);
 #ifdef MH_VERBOSE
 	printf("Finished dump\r\n");
 #endif
@@ -1548,6 +1558,14 @@ void ee_dump_page_range(int first_page,int last_page)
 	int pos = first_page * EELOG_PAGESIZE;
 	for(int page=first_page;page<=last_page;page++)
 	{
+		if(Diags_page_abort) break;		// Claude 14/11/2026. Binary transfer failed
+		if(Diags_page_skip > 0)			// Claude 14/11/2026. Resume (ATXSKIP): the PC has this page, don't read it
+		{
+			Diags_page_skip--;
+			pos += EELOG_PAGESIZE;
+			Pages_output++;
+			continue;
+		}
 #ifdef MH_VERBOSE
 		printf("FilePage:%d\r\n",page);
 #endif
@@ -1633,7 +1651,7 @@ void ee_dump_last_XMb_pages(int megabytes)	// MHH:31/07/2023
 //		page_adjust = Dump5Mb.pagemap[i].page_adjust;
 		ee_dump_page_range(from_page,to_page);	// Could have just passed the index...
 	}
-	ee_dump_finish();
+	ee_dump_finish(true);
 #ifdef MH_VERBOSE
 	DPRINTF("Finished dump\r\n");
 #endif
@@ -1708,7 +1726,7 @@ void ee_dump_last_5Mb_pages(void)	// MHH:31/07/2023
 #ifdef MH_VERBOSE
 	DPRINTF("Finished dump\r\n");
 #endif
-	AC210_watchdog_active = true; // 768
+	AC210_watchdog_active = true; // 768 M8
 }
 #endif
 //---------------------------------------------------------------------------------------------
@@ -1911,7 +1929,7 @@ void AC210_ee_load_range(void)
 	// OK, still have to tell AC200Diagnostics where the last diags rec is.
 #endif
 
-	ee_dump_finish();
+	ee_dump_finish(true);
 
 
 //	PRINTF(":A:DPOS=%d\r\n",last_drec_pos);		// MHH:16/09/2026. This is now redundant for latest Diagnostics, but leave in for earlier versions.
@@ -1923,39 +1941,128 @@ void AC210_ee_load_range(void)
 #define EELOAD_DUMP_ALL		65535
 #define EELOAD_DUMP_5MB		65534		// MHH:31/07/2023
 #define EELOAD_DUMP_1MB		65533		// MHH:27/06/2025
+#define EELOAD_DUMP_RAW		65532		// MHH:30/10/2026
 // Dump current could be 65534??
+
+
+uint8_t Raw_fbuff[UU_FBUFF_SIZE];
+
+bool Raw_page_all_255(void)
+{
+	for(int i=0;i<FLASH_PAGE_SIZE;i++)
+	{
+		if(Raw_fbuff[i] != 255) return false;
+	}
+	return true;
+}
+int Fbuf_ix=0;
+int Fbuf_page=0;
+void Fbuf_putc(uint8_t b)
+{
+	if(Fbuf_ix >= FLASH_PAGE_SIZE)
+	{
+		Diags_send_UU_fbuff_page(++Fbuf_page);
+		Fbuf_ix = 0;
+	}
+	UU_fBuff[Fbuf_ix++] = b;
+}
+void Fbuf_putbuffer(void)
+{
+	if(Raw_page_all_255())
+	{
+		Fbuf_putc('-');
+		return;
+	}
+	for(int i=0;i<FLASH_PAGE_SIZE;i++) Fbuf_putc(Raw_fbuff[i]);
+}
+void Fbuf_puts(char *str)
+{
+	uint8_t b;
+	for(int i=0;i<80;i++)
+	{
+		b = *str++;
+		if(b == 0) return;
+		Fbuf_putc(b);
+	}
+}
+void Fbuf_flush(void)
+{
+	for(;Fbuf_ix<FLASH_PAGE_SIZE;) UU_fBuff[Fbuf_ix++] = 0;
+	Fbuf_putc(0);
+}
+
+void ee_dump_all_raw_pages(void)
+{
+	char page_head[20];
+
+
+	AC210_watchdog_active = false;				// This could take a while
+
+	uint32_t pos = 0;
+	p_eeprom_i2c_pos(pos);
+
+	if(Diags_raw_from == 0)		// Claude 14/11/2026. ATXRAWFROM (resume): the PC already has the EEPROM pages
+	{
+		for(int page=0;page<64;page++)
+		{
+
+			if(p_eeprom_i2c_read(UU_fBuff, EELOG_PAGESIZE))
+			{
+				txDebug(":A:ERR\r\n");
+				DebugAbort("i2c_read");
+			}
+			if(Diags_send_UU_fbuff_page(page) == false) return;	// Claude 14/11/2026. Transfer failed
+		}
+	}
+
+	pos = 0;
+	int raw_page = 0;
+	Fbuf_ix = 0;
+	Fbuf_page=0;
+	for(raw_page=Diags_raw_from;raw_page < FLASH_PART_PAGES;raw_page++)	// Claude 14/11/2026. Was from 0
+	{
+		if(Diags_page_abort) return;	// Claude 14/11/2026. Transfer failed
+
+#ifdef MH_VERBOSE
+		printf("FilePage:%d\r\n",page);
+#endif
+		pos = raw_page * FLASH_PAGE_SIZE;
+		if(ee_read_log(Raw_fbuff,EELOG_PAGESIZE,pos) < 0)
+		{
+		    txDebug(":A:ERR\r\n");
+		    printf("Error reading log\r\n");
+		    return;
+		}
+		sprintf(page_head,"|Page:%d{",raw_page);
+		Fbuf_puts(page_head);
+		Fbuf_putbuffer();
+		Fbuf_putc('}');
+	}
+	Fbuf_flush();
+	AC300_RS232_exit();
+//	ee_dump_finish(true);
+}
 
 void AC210_ee_load(WORD value)	// called from comms.c
 {
 	Log_putc_write_buffer();	// MHH:10/12/2023. So we can use putc_pos, not putc_pos2
 
-	if(value == EELOAD_DUMP_ALL)
+	switch(value)
 	{
+	case EELOAD_DUMP_ALL:
 		ee_dump_all_pages();
 		return;
-	}
-#ifdef MH_XXX
-	if(value == EELOAD_DUMP_5MB)	// MHH:31/07/2023
-	{
-		ee_dump_last_5Mb_pages();
-		return;
-	}
 
-	if(value == EELOAD_DUMP_1MB)	// MHH:27/06/2025
-	{
-		ee_dump_last_1Mb_pages();
-		return;
-	}
-#endif
-	if(value == EELOAD_DUMP_5MB)	// MHH:31/07/2023
-	{
+	case EELOAD_DUMP_5MB:	// MHH:31/07/2023
 		ee_dump_last_XMb_pages(5);
 		return;
-	}
 
-	if(value == EELOAD_DUMP_1MB)	// MHH:27/06/2025
-	{
+	case EELOAD_DUMP_1MB:	// MHH:27/06/2025
 		ee_dump_last_XMb_pages(1);
+		return;
+
+	case EELOAD_DUMP_RAW:	// MHH:30/10/2026
+		ee_dump_all_raw_pages();
 		return;
 	}
 
@@ -2029,7 +2136,7 @@ void AC210_ee_load(WORD value)	// called from comms.c
 #endif
 	if(Diags_RS232_page_logic)
 	{
-		ee_dump_finish();
+		ee_dump_finish(false);
 		return;
 	}
 

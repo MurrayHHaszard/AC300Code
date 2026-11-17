@@ -12,7 +12,9 @@
 #include "ac210_global.h"
 #include "ac210_timer.h"
 
+#include "global.h"
 #include "param.h"
+#include "rpm.h"
 
 //---------------------------------------------------------------------------------------------
 // from pinint.c
@@ -97,16 +99,22 @@ int mh_int_count2;
 int mh_int_count3;
 
 int Engine_rpm_delta_per_tick_1dec;
-int Engine_rpm_1dec;
+//int Engine_rpm_1dec;
+uint16_t Engine_rpm;
+
 int Engine_rpm_1dec_prev;
-int Engine_rpm_1dec_prev1;
+//int Engine_rpm_1dec_prev1;
 int Engine_rpm_delta_1dec;
 int Prop_rpm_1dec;
 int Prop_rpm_1dec_prev;
-int Prop_rpm_1dec_prev1;
+//int Prop_rpm_1dec_prev1;
+
+
+#ifndef MH_CLAUDE_CONTROL
 int Prop_rpm_delta_1dec;	// MHH:18/11/2024
 int Prop_rpm_delta_per_tick_1dec;
-#define PU_MAX		32
+//#define PU_MAX		32
+#define PU_MAX		4
 struct PROP_DEBUG
 {
 	uint32_t Prop_usecs;
@@ -116,10 +124,17 @@ struct PROP_DEBUG
 	int16_t Prop_delta;
 } PDebug_t[PU_MAX],*pPDebug;
 int PU_ix;
+
+#define PROP_DELTA_MAX	10
+int Pdelta_ix;
+int16_t Prop_delta_t[PROP_DELTA_MAX];
+extern int16_t Engine_rpm_change_in_five_ticks;
+#endif
+void Control_RPM_update(uint32_t period_us);
 // Note: Changed interrupt initialise so ISR is only called on a falling edge. MHH:12/11/2022
 void Prop_RPM_ISR(void)
 {
-    mh_int_count1++;
+//    mh_int_count1++;
 	int s1 = Board_pin_read(PIN_DEF2(AC210_J1_MAG_INT_PIND));
 
 #ifdef MH_DEBOUNCE
@@ -137,15 +152,16 @@ void Prop_RPM_ISR(void)
     	return;
     }
 
-    mh_int_count3++;
+//    mh_int_count3++;
     Prop_int_usecs_prev = Prop_int_usecs;
     Prop_int_usecs = Timer_read_us(&Prop_int_timer);
     Timer_reset(&Prop_int_timer);
+    Control_RPM_update(Prop_int_usecs);
 
-    Engine_rpm_1dec_prev1 = Engine_rpm_1dec_prev;	// MHH:21/05/2023
-    Engine_rpm_1dec_prev = Engine_rpm_1dec;
+//    Engine_rpm_1dec_prev1 = Engine_rpm_1dec_prev;	// MHH:21/05/2023
+//    Engine_rpm_1dec_prev = Engine_rpm_1dec;
 
-    Prop_rpm_1dec_prev1 = Prop_rpm_1dec_prev;
+//    Prop_rpm_1dec_prev1 = Prop_rpm_1dec_prev;
     Prop_rpm_1dec_prev = Prop_rpm_1dec;
 
 //    Prop_int_rpm =  (60000000)/Prop_int_usecs;	// No implied decimal place
@@ -153,12 +169,17 @@ void Prop_RPM_ISR(void)
     uint32_t prop_int_usecs_2revs = Prop_int_usecs + Prop_int_usecs_prev;
 
     Prop_rpm_1dec = (1200000000)/prop_int_usecs_2revs;		// 1 implied decimal place
-    Prop_rpm_delta_1dec = (Prop_rpm_1dec - Prop_rpm_1dec_prev1)/2;	// Average change over the last 2 revs
+//    Prop_rpm_delta_1dec = (Prop_rpm_1dec - Prop_rpm_1dec_prev1)/2;	// Average change over the last 2 revs
+//    Prop_rpm_delta_1dec = (Prop_rpm_1dec - Prop_rpm_1dec_prev);	// change over the last 2 revs
 
     int scaling_factor_percent = getParameter(SF_MAG_SPEED);
-    Engine_rpm_1dec  = (Prop_rpm_1dec * scaling_factor_percent + 50) / 100;
+    int engine_rpm_1dec  = (Prop_rpm_1dec * scaling_factor_percent + 50) / 100;
+    Engine_rpm = (engine_rpm_1dec + 5)/10;
 //    int engine_rpm_delta_1dec = Engine_rpm_1dec - Engine_rpm_1dec_prev;	// Change in rpm since last revolution of prop
-    Engine_rpm_delta_1dec = (Engine_rpm_1dec - Engine_rpm_1dec_prev1)/2;	// Average change over the last 2 revs
+//    Engine_rpm_delta_1dec = (Engine_rpm_1dec - Engine_rpm_1dec_prev1)/2;	// Average change over the last 2 revs
+#ifdef MH_YYY
+
+    Engine_rpm_delta_1dec = (Engine_rpm_1dec - Engine_rpm_1dec_prev);	// change over the last 2 revs
 
 
     PU_ix &= (PU_MAX -1);		// Only works if multiple of 2
@@ -171,15 +192,34 @@ void Prop_RPM_ISR(void)
     pPDebug->Prop_delta = Prop_rpm_delta_1dec;
 
     PU_ix++;
-
+#endif
     /*
      *  Hope to use Prop_rpm_delta_per_tick as the 'D' component of PID control.
      */
 
-
+#ifdef MH_YYY	// MHH:17/10/2026. Now get RPM delta by RPM_update_history(void) in control.c
     int prop_int_usecs = (int)prop_int_usecs_2revs;
-    Prop_rpm_delta_per_tick_1dec = (Prop_rpm_delta_1dec * 40000) / prop_int_usecs;	// Because 40,000 usecs per 2 x tick
-    Engine_rpm_delta_per_tick_1dec = (Engine_rpm_delta_1dec * 40000) / prop_int_usecs;	// Because 40,000 usecs per 2 x tick
+//    Prop_rpm_delta_per_tick_1dec = (Prop_rpm_delta_1dec * 40000) / prop_int_usecs;	// Because 40,000 usecs per 2 x tick
+//    Engine_rpm_delta_per_tick_1dec = (Engine_rpm_delta_1dec * 40000) / prop_int_usecs;	// Because 40,000 usecs per 2 x tick
+    Prop_rpm_delta_per_tick_1dec = (Prop_rpm_delta_1dec * 20000) / prop_int_usecs;	// Because 20,000 usecs per tick
+//    Engine_rpm_delta_per_tick_1dec = (Engine_rpm_delta_1dec * 20000) / prop_int_usecs;	// Because 20,000 usecs per tick
+
+    Pdelta_ix %= PROP_DELTA_MAX;
+    Prop_delta_t[Pdelta_ix++] = Prop_rpm_delta_per_tick_1dec;
+
+    int prop_delta_tot_1dec = 0;
+    for(int i=0;i<PROP_DELTA_MAX;i++) prop_delta_tot_1dec += Prop_delta_t[i];
+
+    int prop_delta_tot_5_ticks = prop_delta_tot_1dec / 10;
+    int engine_delta_tot_5_ticks = (prop_delta_tot_5_ticks * scaling_factor_percent + 50) / 100;
+
+//    Engine_rpm_delta_per_tick_1dec = (Prop_rpm_delta_per_tick_1dec * scaling_factor_percent + 50) / 100;	// Because 20,000 usecs per tick
+
+//	Engine_rpm_change_in_five_ticks = (Engine_rpm_delta_per_tick_1dec)/2;	// MHH:15/10/2026. divide by 2 instead of *5/10
+	Engine_rpm_change_in_five_ticks = engine_delta_tot_5_ticks;
+
+#endif
+
 
     Prop_int_count++;
 #ifdef MH_RPM_MAV
@@ -190,10 +230,12 @@ void Prop_RPM_ISR(void)
     ADC_check_state_test();
 #endif
 }
+#ifdef MH_XXX
 uint32_t Prop_read_usecs(void)
 {
 	return Timer_read_us(&Prop_int_timer);
 }
+#endif
 //----------------------------------------------------------------------------------------
 // Called from void SysTick_Handler() to make sure prop is still turning. If we are getting zero readings in 0.5 secs, then assume stopped.
 void MagTimer_Check_RPM(void)
@@ -206,16 +248,16 @@ void MagTimer_Check_RPM(void)
 #endif
 //		Prop_int_rpm = 0;
 //		Prop_int_rpm_prev = 0;
-		Engine_rpm_1dec = 0;		// MHH:13/05/2024
+		Engine_rpm = 0;		// MHH:13/05/2024
 		Prop_rpm_1dec = 0;			// MHH:18/05/2024
 		Prop_rpm_1dec_prev = 0;
-		Prop_rpm_1dec_prev1 = 0;
+//		Prop_rpm_1dec_prev1 = 0;
 
 	}
 	Prop_int_count = 0;
 }
 //----------------------------------------------------------------------------------------
-int Prop_rpm;
+//int Prop_rpm;
 int MagTimer_count;
 uint32_t MagTimer_Get_RPM2(void)
 {
@@ -224,8 +266,8 @@ uint32_t MagTimer_Get_RPM2(void)
 	{
 		return 0;
 	}
-
-	Prop_rpm = (Engine_rpm_1dec + 5)/10;	// MHH:13/05/2024
+	return Get_RPM();
+//	Prop_rpm = (Engine_rpm_1dec + 5)/10;	// MHH:13/05/2024
 
 #ifdef MH_XXX	// MHH:13/05/2024
 
@@ -242,7 +284,7 @@ uint32_t MagTimer_Get_RPM2(void)
 		Prop_rpm = mav;
 	}
 #endif
-	return Prop_rpm;
+//	return Prop_rpm;
 }
 //----------------------------------------------------------------------------------------
 /**
@@ -250,17 +292,6 @@ uint32_t MagTimer_Get_RPM2(void)
  * @return	Nothing
  */
 //--------------------------------------------------------------------------------------------
-struct
-{
-//#define MH_DEBUG_RPM
-#ifdef MH_DEBUG_RPM
-	uint32_t tbl[64];
-	uint32_t ix;
-#endif
-	uint32_t high;
-	uint32_t low;
-} DebugRPM;
-
 
 //----------------------------------------------------------------------------------------
 // Separate routine so we only calculate when interested
@@ -268,8 +299,6 @@ extern WORD AT_flag_rpm_stop;	// defined in comms.c
 
 WORD p_GetAC200_magRPM(WORD ScalingFactorPercent)
 {
-//	static int cnt;
-//	static uint32_t lastRPM;
 	uint32_t rpm1,rpm2;
 	rpm1 = MagTimer_Get_RPM2();
 	rpm2 = rpm1;

@@ -1268,6 +1268,7 @@ char RC_S_keyword[RC_S_MAX_KEYWORD_LEN+2];
 int RC_S_keyval;
 int RC_S_value;
 int RC_S_speed_value;
+int RC_S_speed_pct;		// Claude 12/11/2026. Speed as a percent from RC_x=nnn%pp (0 = not given)
 bool RC_S_terminate_msg = true;
 char *RC_S_bps;
 
@@ -1636,6 +1637,7 @@ void RC_S_brushless_terminate(void)	// MHH:20/02/2025
 {
 	Set_RC_S_mode(RC_S_MODE_C_IDLE,1302);
     RC_S_speed_value = 0;
+    RC_S_speed_pct = 0;		// Claude 12/11/2026
     Set_cState(C_IDLE,1302);
     Set_dState(MD_IDLE,1302);
     if(RC_S_terminate_msg)
@@ -2510,7 +2512,7 @@ int fn_getval(int idec,int icnt,int *ier)
 			if(icnt) err = FN_GETVAL_ERR;
 			break;
 		}
-		if(c == ':')
+		if(c == ':' || c == '%')	// Claude 12/11/2026. '%' too (RC_x=nnn%pp), else it is skipped and nnn%pp read as one number
 		{
 			break;
 		}
@@ -2551,6 +2553,8 @@ int RC_S_getval(int idec)
 	int val,val2;
 	int val_speed1=0;
 	int val_speed2=0;
+	int val_pct1=0;		// Claude 12/11/2026. RC_x=nnn%pp: speed as a percent (1-100)
+	int val_pct2=0;
 	char c;
 	int err;
 
@@ -2583,6 +2587,12 @@ int RC_S_getval(int idec)
 			val_speed1 = fn_getval(0,0,&err);
 			c = *RC_S_bps++;
 		}
+		else if(c == '%')	// Claude 12/11/2026
+		{
+			val_pct1 = fn_getval(0,0,&err);
+			if(err) return RC_S_ERR_BAD_VALUE;
+			c = *RC_S_bps++;
+		}
 	}
 	if(c == ',')
 	{
@@ -2599,9 +2609,19 @@ int RC_S_getval(int idec)
 				val_speed2 = fn_getval(0,0,&err);
 				c = *RC_S_bps++;
 			}
+			else if(c == '%')	// Claude 12/11/2026
+			{
+				val_pct2 = fn_getval(0,0,&err);
+				if(err) return RC_S_ERR_BAD_VALUE;
+				c = *RC_S_bps++;
+			}
 			if(val_speed1 != val_speed2)
 			{
 
+			}
+			if(val_pct2 != 0 && val_pct1 != val_pct2)	// Claude 12/11/2026
+			{
+				return RC_S_ERR_BAD_VALUE;
 			}
 		}
 		if(val != val2)
@@ -2627,9 +2647,21 @@ int RC_S_getval(int idec)
 	{
 		return RC_S_ERR_BAD_VALUE;			// Invalid terminator
 	}
+	/* Claude 12/11/2026. Ranges checked here too: without the ",nnn" check value they were not checked at all, so
+	   e.g. RC_F=5:15 sent the hub '0'+15. */
+	if(val_speed1 < 0 || val_speed1 > 9 || val_pct1 < 0 || val_pct1 > 100)
+	{
+		return RC_S_ERR_BAD_VALUE;
+	}
 	if(val_speed1 > 0)
 	{
 		RC_S_speed_value = val_speed1;
+		RC_S_speed_pct = 0;					// Claude 12/11/2026. The latest form given applies
+	}
+	if(val_pct1 > 0)						// Claude 12/11/2026
+	{
+		RC_S_speed_pct = val_pct1;
+		RC_S_speed_value = 0;
 	}
 	RC_S_value = val;
 	return RC_S_OK;
@@ -2784,6 +2816,22 @@ char Get_SIG100_speed_from_remote(void)
 	case RC_S_MODE_REVERSE_FINE:
 	case RC_S_MODE_REVERSE_COARSE:
 		return RC_S_speed_value;
+	}
+}
+//------------------------------------------------------------------------------------------------
+// Claude 12/11/2026. Speed as a percent for the direct commands (RC_x=nnn%pp), 0 = none given.
+int Get_SIG100_pct_from_remote(void)
+{
+	switch(RC_S_mode)
+	{
+	default:
+		return 0;
+
+	case RC_S_MODE_FINE:
+	case RC_S_MODE_COARSE:
+	case RC_S_MODE_REVERSE_FINE:
+	case RC_S_MODE_REVERSE_COARSE:
+		return RC_S_speed_pct;
 	}
 }
 //------------------------------------------------------------------------------------------------

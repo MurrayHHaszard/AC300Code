@@ -13,6 +13,7 @@
 #include "ac210_global.h"
 #include "ac210_log.h"
 #include "ac210_ssp.h"
+#include "uuencode.h"
 
 /*****************************************************************************
  * Private types/enumerations/variables
@@ -463,6 +464,7 @@ static void SSP_WritePage(uint32_t page,uint32_t len, uint8_t *pBuffer)
 }
 #endif
 //-------------------------------------------------------------------------------------------------
+#ifdef MH_XXX	// MHH:01/11/2026
 static void SSP_ReadPage(uint32_t page,uint32_t len, uint8_t *pBuffer)
 {
 //	printf("SSP_ReadPage\r\n");
@@ -476,6 +478,7 @@ static void SSP_ReadPage(uint32_t page,uint32_t len, uint8_t *pBuffer)
 
 	memcpy(pBuffer,Rx_Buf+4,len);
 }
+#endif
 //-------------------------------------------------------------------------------------------------
 int SSP_ReadBuffer(uint32_t byte_address, uint8_t *pBuffer, uint32_t len)
 {
@@ -1023,6 +1026,54 @@ static void flash_hex2(int jstart)
 }
 #endif
 //-----------------------------------------------------------------------------------
+//AC210_flash_read_part(pos,buff,len);
+
+//-----------------------------------------------------------------------------------
+void eeprom_hex3(int jstart)
+{
+	PRINTF("  ");
+
+	int jmax=jstart+16;
+#ifdef MH_BUFF250
+	if(jmax > 250)
+	{
+		jmax=250;
+		for(int i=0;i<6;i++) printf("   ");
+	}
+#endif
+
+	for(int j=jstart;j<jmax;j++)
+	{
+		uint8_t c = UU_fBuff[j];
+		uint8_t c2 = c;
+		if(c < 32 || c > '}') c2 = '.';
+		PC_putc(c2);
+	}
+}
+int AC210_hex_display_UU_fBuff(void)
+{
+	int jstart=0;
+	uint8_t c;
+	for(int i=0;i<1024;i++)
+	{
+		if(i && (i%16 == 0))
+		{
+			eeprom_hex3(jstart);
+			jstart+=16;
+		}
+		if(i%16 == 0) PRINTF("\r\n%04x ",i);
+		c = UU_fBuff[i];
+		PRINTF(" %02x",c);
+	}
+	eeprom_hex3(jstart);
+	//	puts("\r\n");
+	PRINTF("\r\n");
+
+    if(PC_ReturnToContinue() == 'X') return 1;
+    return 0;
+}
+
+
 void AC210_ssp_flash_hex(WORD value)
 {
 	AC210_watchdog_active = false;
@@ -1031,14 +1082,18 @@ void AC210_ssp_flash_hex(WORD value)
     wait_ms(100);			// Wait for '>'
 
 	uint32_t page = value;
+
 	for(;;)
 	{
-		PRINTF("\r\nPage:%d\r\n",page);
-		SSP_ReadPage(page,256, I2C_hex_buff);
+		int pos = page * 1024;
+		PRINTF("\r\nPage:%d [%04x]\r\n",page,pos);
+		AC210_flash_read_part(pos,UU_fBuff,1024);
 
+//		SSP_ReadPage(page,256, I2C_hex_buff);
+
+
+		if(AC210_hex_display_UU_fBuff()) break;
 		page++;
-
-		if(AC210_hex_display_i2c_buff()) break;
 
 	}
 	AC210_watchdog_active = true;

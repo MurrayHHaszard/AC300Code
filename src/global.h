@@ -953,7 +953,132 @@ Added
  *                 See AC300RemoteTestCAN2 for example C# program using protocol.
  */
 
-#define SUBVERSION			173			// MHH:13/10/2026
+//#define SUBVERSION			173			// MHH:13/10/2026
+
+/*
+ * MHH:15/10/2026. Try changing RPM delta from control.c to RPM ISR to try and smooth.
+ */
+
+//#define SUBVERSION			174			// MHH:15/10/2026
+
+/*
+ * MHH:25/10/2026. Use Claude to rewrite control logic for brushless. Note: Need to test thoroughly.
+ *
+ *
+ *  MHH:25/10/2026. Modify CAN_IRQHandler(void) so that in event of a CAN error the serial message "E=%d\r\n" is sent no more than 10 times because if CAN not working
+ *                  then the Serial to CAN converter was choking sending CAN error message to UART0.
+ */
+
+//#define SUBVERSION			175			// MHH:25/10/2026
+
+/*
+ * MHH:26/10/2026. Claude controller code needed integrating with existing parameters. Note single parameter to control behavior is rpm_per_degree which is currently held
+ *                 held in Control Value (200) parameter field. Starting value for Rotax is 130, and 90 for UL.
+ */
+
+//#define SUBVERSION			176			// MHH:26/10/2026
+
+/*
+ *  MHH:30/10/2026. Some changes to control based on Russell's testing on Rotax 912.
+ *
+ *         Following line in param.c had a syntax error (']' in wrong place) so was always setting parameter to 100
+ *  				if(ps.parms[BL_SCALE_PCT] < 10 || (ps.parms[BL_SCALE_PCT > 500]) ps.parms[BL_SCALE_PCT] = 100;
+ *  	   Corrected line:
+ *                   if((ps.parms[BL_SCALE_PCT] < 10) || (ps.parms[BL_SCALE_PCT] > 500)) ps.parms[BL_SCALE_PCT] = 100;
+ */
+
+//#define SUBVERSION			177			// MHH:30/10/2026
+
+/*
+ * MHH:02/11/2026. Added 	case EELOAD_DUMP_RAW:	// MHH:30/10/2026
+								ee_dump_all_raw_pages();
+								return;
+
+								to allow dumping of all raw pages if requested from AC300Diagnostics. Note need version >= 10.135 of AC300Diagnostics.
+
+				    Modified flash hex display command, so instead of displaying a physical page (256 bytes) of flash memory, it now displays a logical
+				    page (1024 bytes), of the logical log file. This allows direct comparison of .flash files using HexDump32 and contents of flash.
+				    The command is: ATXFHEX=nnnn where nnnn is the logical page number.
+
+				    Problem: Very occasionally there would be a single missing byte immediately before the diagnostics record in the data log file.
+				    Fix:In ee_check_logctl_ini(), logic scanned for 1024 255 in a row to find start of erased. In some cases a valid 255 data byte might
+				    have been last byte written (as ClaudeCode pointed out). Solution is to add 1 to data pointer. Diagnostics should handle the trailing 255 as EOF.
+				    				start_erased_pos = AC210_log.getc_pos2;
+
+				    After Russell's tests, hard CS_control.start_persist_s = 0.5F;			// MHH:03/11/2026 in control.c
+
+//#define SUBVERSION			178			// MHH:03/11/2026
+
+ *
+ *	Version 10179. Claude 13/11/2026
+ *		- remote.c fn_getval: '%' ends a number like ':' (RC_x=nnn%pp speed format; 5%5 was read as 55).
+ *		- Pitch motor profile by hub firmware (CS_SetHubProfile, cs_control.c; called from control.c with
+ *		  BL_HUB_SOFTWARE_VERSION from the start-up handshake and Enc_data.sw_flags bit 2):
+ *		  LEGACY (hub before 1.62) and MAXON: unchanged. LEARNED (hub 1.62 on, which runs at the commanded speed):
+ *		  at take-off a slow COARSE band move also uses a prediction with os_response_s and stops on the smaller one
+ *		  (with hub 1.63 a long slow COARSE move after the first burst overshot ~0.13 deg -> FINE: 2 reversals).
+ *		  "CS hub profile" written to the program log.
+ *
+ */
+
+
+//#define SUBVERSION			179			// Claude 13/11/2026
+/*
+ *	Version 10180. Claude 14/11/2026. Serial binary page transfer (CRC32) made safe on a bad link:
+ *		- ATDIAGS_BIN=0: sends the first 1024 bytes of EEPROM (as ATDIAGS=0) as one binary page with CRC32,
+ *		  then ":X". Diagnostics 1.136 uses it for AC300 10180 on; ATDIAGS=0 (uuencoded) unchanged for older ones.
+ *		  Only 0 for now (history runs send 256/512/768 bytes and the page has no length) - ATDIAGS=n stays uuencoded.
+ *		- Diags_send_UU_fbuff_page: waits at most 3 s for ACK/NAK (was for ever), at most 5 sends per page (was
+ *		  unlimited), CAN (0x18) from the PC stops the transfer. After a failure (Diags_page_abort) the remaining
+ *		  pages, ":X" and the PLOG text are not sent; the dump loops stop. Reset by the next AT command.
+ *		  Before, a lost link left the AC300 waiting for ever (main loop stopped) or resending forever.
+ *		- ATXSKIP=n: the next ATXLOAD / ATXLAST transfer does not send its first n pages (they still count), so
+ *		  Diagnostics can continue a failed save from where it stopped instead of starting again (dump all / raw
+ *		  can take 20 minutes). Dump all / last 5 / 1 MB don't even read the skipped flash pages (instant); single
+ *		  run / range still build them (~6 ms a page). The dump must produce the same pages again - new log data
+ *		  written between the attempts can make the join inconsistent.
+ *		- ATXRAWFROM=n: the next raw dump (ATXLOAD=65532) starts at flash page n and leaves out the 64 EEPROM pages.
+ *		  Raw output isn't page aligned ("|Page:n{" + 1024 bytes or "-" + "}"), so Diagnostics cuts its file after the
+ *		  last complete page record and asks for the next flash page.
+ */
+//#define SUBVERSION			180			// Claude 14/11/2026
+/*
+ *	Version 10181. Claude 15/11/2026. Faster binary transfers (Diagnostics only, nothing in flight changed):
+ *		- ATXBAUD=n (n = baud/100: 1152, 2304 or 4608): the next ATXLOAD / ATXLAST / ATXRS232TEST runs at that rate
+ *		  instead of 115200 (binary page logic only), then back to 115200 for the one after. Other values: ERROR.
+ *		  Diagnostics 1.137 starts at 460800 and steps down to 230400 / 115200 if the link can't keep up.
+ *		  The transceiver (ST3232) is rated 400 kbps, so 460800 is above its rating - fine on a short cable.
+ *		- AC210_PC_ChangeBaud: above 115200 uses the fractional divider (Chip_UART_SetBaudFDR; UART PCLK 24 MHz:
+ *		  230769 / 461538 baud, +0.16% as 115200). The integer divider gave 250000 / 500000. 19200 and 115200 are
+ *		  set exactly as before (FDR back to 1).
+ *		- Diags_send_UU_fbuff_page returns as soon as the page is sent; the reply is collected when the next page
+ *		  (or ":X" / any txDebug text) is sent, so the next flash page is read while the PC checks and ACKs this one.
+ *		  The page waiting for its ACK is kept in Diags_page_copy for resends. The PC sees the same protocol.
+ */
+//#define SUBVERSION			181			// Claude 15/11/2026
+/*
+ *	Version 10182. Claude 17/11/2026. Take-off run-up move (cs_control.c, user's design after the Rotax 912 test stand
+ *	runs 910 / 912: run-up 2000-3000 rpm/s, a full-speed burst from ~2800 rpm went 3.6 / 4.5 deg COARSE where ~1.8 was
+ *	needed, then 6-9 s of slow FINE steps back to the band).
+ *		- New parameter BL_TAKEOFF_ANGLE (82, "BLTA", 1 decimal place): blade angle at the take-off rpm at full throttle
+ *		  standing still (a quick static full-throttle check; the stand: 18.3). 0 = not used (default; old behaviour).
+ *		  Accepted only between the fine and coarse stop angles (setParameter, and again in control.c).
+ *		- With a take-off target (within high_zone_rpm of max_rpm) and that angle set: no COARSE below 85% of the target
+ *		  while the rpm rises from below with the blade finer than the goal, then ONE full-speed COARSE move to the
+ *		  angle + 0.7 deg (margin on the low-rpm side, hard-coded for now), then the normal control. Not for a
+ *		  touch-and-go (rpm stays above 85%, blade already coarse). Earlier only if at the present rate the rpm would
+ *		  reach max_rpm before the move could be done; reaching max_rpm always gives the overspeed response.
+ *		- Take-off margin 0.5 deg (bench), the move stops 0.19 s x blade rate early. Well below the band (> 2 x deadband)
+ *		  FINE moves are no longer stopped / held back by the rpm rise (only external rises count): the 912 Hold ->
+ *		  Takeoff staircase (7-8 s) became one move (~3 s).
+ *		- No pitch motor ramp-up (motor_slew_rpm_per_tick 7000): straight to the commanded speed, all hubs.
+ *		- control.c: gear ratio (SF_MAG_SPEED), overspeed (BL_CONTROL) and deadband are read every tick, not only at
+ *		  start-up: a parameter change takes effect without a restart (bench: 243 -> 254 kept 2.43, engine ~255 rpm high).
+ */
+#define SUBVERSION			182			// Claude 17/11/2026
+
+#define MH_CLAUDE_CONTROL			// MHH:26/10/2026
+
 #define VERSION	(10000+SUBVERSION)		// MHH:15/05/2024
 
 #define PCB_VERSION_MULTIPLIER	100000			// MHH:15/10/2024

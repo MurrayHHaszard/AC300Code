@@ -191,6 +191,26 @@ void Diags_send_rec_all(void)
 	}
 	Diags_uuencode_send_buff(UU_fBuff,bytes_to_send,DIAGS_NO_PREFIX);
 }
+// Claude 14/11/2026 (10180). ATDIAGS_BIN=0: as ATDIAGS=0 (Diags_update_rec + Diags_send_rec_all) but the 1024 bytes go
+// as one binary page with CRC32 and resend (Diags_send_UU_fbuff_page), then ":X".
+void AC300_RS232_exit(void);
+void Diags_send_rec_all_bin(void)
+{
+	Diags_update_rec();
+	Diags_last_drec_pos = -1;
+	Diags_last_d_r_sent = Stat_Rec;		// Useful to get log info
+	WriteStatsRec("Before Diags send",DIAGS_SHORT_LEN);
+
+	p_eeprom_i2c_pos(0);
+	if(p_eeprom_i2c_read(UU_fBuff, 1024))
+	{
+	    txDebug(":A:ERR\r\n");
+		DebugAbort("i2c_read");
+	}
+	AC210_watchdog_active = false;		// up to 5 sends x 3 s; p_Wait turns it back on
+	Diags_send_UU_fbuff_page(0);
+	AC300_RS232_exit();					// not sent if the page failed
+}
 #ifdef MH_XXX
 void Diags_send_rec(td_Stats *d_r,int pos,int send_len)
 {

@@ -229,8 +229,9 @@ typedef enum
 	RC_BAUDRATE,			// 79. MHH:21/02/2025 Applies to Auxiliary Serial and CAN
 	RC_PROPNUM,				// 80. MHH:10/03/2025. Applies only to CAN
 	BL_SCALE_PCT,			// 81. MHH:16/04/2026
+	BL_TAKEOFF_ANGLE,		// 82. Claude 17/11/2026. Static full-throttle take-off blade angle, 1 decimal place (0 = not used)
     // Array Index
-    MAX_P_INDEX				// 81
+    MAX_P_INDEX				// 83
 } ParamIndex;
 
 #define PARAM_CHECK_CODE		135798642L

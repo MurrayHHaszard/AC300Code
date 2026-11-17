@@ -1284,7 +1284,7 @@ void main(void)
             checkForAllCommands();
 
             AC210_SIG100_check();	// MHH:17/02/2025. Moved to here so have position and flags before remote control cycle
-            AC210_SIG100_get_delta_angle();
+//            AC210_SIG100_get_delta_angle();
             if(getParameter(REMOTE_COMMS_TYPE))	// If not = 0
             //            if (remoteMode())
             {

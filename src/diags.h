@@ -172,7 +172,12 @@ void Diags_send_rec(td_Stats far *d_r,int pos,int send_len);
 void Diags_update_rec(void);
 void Diags_uuencode_send_buff(uint8_t *pbuff,int buff_len,int u_prefix);
 
-void Diags_send_UU_fbuff_page(int page);
+bool Diags_send_UU_fbuff_page(int page);		// Claude 14/11/2026: returns false if not acknowledged
+bool Diags_page_flush(void);					// Claude 15/11/2026: collect the last page's ACK (false if failed)
+void Diags_send_rec_all_bin(void);			// Claude 14/11/2026: ATDIAGS_BIN=0
+extern bool Diags_page_abort;
+extern uint16_t Diags_page_skip;			// Claude 14/11/2026: ATXSKIP
+extern uint16_t Diags_raw_from;				// Claude 14/11/2026: ATXRAWFROM
 
 #define DIAGS_NO_PREFIX			0
 #define DIAGS_U_PREFIX			1

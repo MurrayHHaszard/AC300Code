@@ -18,6 +18,7 @@ Changes:
 
 #include "global.h"
 #include "param.h"
+#include "rpm.h"
 
 /*  RPM measurement is performed by utilising counters TB3 & TB4 in period
     measurement mode. The addition of an overflow counter provides accuracy
@@ -76,13 +77,12 @@ WORD magSpeed (void)
     return magRPM;
 }
 //-----------------------------------------------------------------------------------------------------
-extern int Engine_rpm_1dec;
 WORD Get_RPM(void)
 {
-	WORD rpm  = (Engine_rpm_1dec + 5) / 10;		// MHH:10/11/2024. Note: need to check is set to zero if prop not moving.
+//	WORD rpm  = (Engine_rpm_1dec + 5) / 10;		// MHH:10/11/2024. Note: need to check is set to zero if prop not moving.
 
 //	WORD rpm;
 //    rpm = magSpeed ();
-	return rpm;
+	return Engine_rpm;
 }
 

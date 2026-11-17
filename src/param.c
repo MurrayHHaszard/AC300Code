@@ -167,6 +167,7 @@ const char pName[MAX_P_INDEX][5] = {
 	"RCBA", // Remote Control Baud Rate
 	"RCPN", // Remote Control Prop Number
 	"BLSP",	// Brushless bl_scale_pct
+	"BLTA",	// Brushless take-off angle (82): blade angle at take-off rpm, full throttle, standing still. Claude 17/11/2026
 
 };
 
@@ -500,7 +501,8 @@ void loadParameters (void)
 
 			    ps.parms[MC_MAX_PWM] = DEF_MC_MAX_PWM;		// MHH:08/05/2024. Because was using location for throttle control, now moved.
 
-			    if(ps.parms[BL_SCALE_PCT] < 10 || ps.parms[BL_SCALE_PCT > 500]) ps.parms[BL_SCALE_PCT] = 100;
+			    if((ps.parms[BL_SCALE_PCT] < 10) || (ps.parms[BL_SCALE_PCT] > 500)) ps.parms[BL_SCALE_PCT] = 100;
+			    if(ps.parms[BL_TAKEOFF_ANGLE] > 900) ps.parms[BL_TAKEOFF_ANGLE] = 0;	// Claude 17/11/2026. Not set (e.g. 0xFFFF after an upgrade)
 
 // read in current sense values
                 readI2C (EEPROMREAD, HW_FACTOR_PAGE, HW_FACTOR_OFFSET, (BYTE *)&hwf, sizeof(hwf));
@@ -902,6 +904,10 @@ BYTE setParameter ( ParamIndex idx, WORD nval)
 
     case BL_SCALE_PCT:	// MHH:16/04/2026
     	rval = (nval >= 10 && nval <= 500);
+    	break;
+
+    case BL_TAKEOFF_ANGLE:	// Claude 17/11/2026. 0 = not used, else between the fine and coarse stop angles (1 decimal place)
+    	rval = (nval == 0 || (nval > ps.parms[BL_FINE_STOP] && nval < ps.parms[BL_COARSE_STOP]));
     	break;
 
 
@@ -1340,6 +1346,7 @@ void setDefaults (void)
     ps.parms[BL_HEATER_START_TEMPERATURE] = 0;
     ps.parms[BL_DIAGNOSTICS] = 0;
     ps.parms[BL_SCALE_PCT] = 100;
+    ps.parms[BL_TAKEOFF_ANGLE] = 0;		// Claude 17/11/2026. Not used until set
 
     ps.parms[SL_T0] = 0;
     ps.parms[SL_T1] = 0;

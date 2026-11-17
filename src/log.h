@@ -81,7 +81,7 @@ typedef struct
 	uint8_t map_byte;
 //	uint8_t dflags;
 	uint8_t checkpoint_secs;
-	uint8_t ticks_per_log;		// number of ticks between logs. Zero means no logging. 50 means once a second.
+	uint8_t ticks_per_log;		// number of ticks between logs. Zero means no logging. 50 means once a second. EXTENDED
 	uint32_t cnt2;
 	uint32_t log_ticks;		// May need to tie in with diagnostics?
 }LogData_T;

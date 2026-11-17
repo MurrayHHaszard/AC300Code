@@ -547,8 +547,10 @@ void CAN_IRQHandler(void)
 
 	if(CAN_error_code)
 	{
-		CAN_error_count++;
-		PRINTF("E=%d\r\n",CAN_error_code);
+		if(CAN_error_count++ < 10)		// MHH:25/10/2026. Otherwise gets choked here.
+		{
+			PRINTF("E=%d\r\n",CAN_error_code);	// Should have detection for error line in C# CAN test program
+		}
 	}
 	/* New Message came */
 	if (IntStatus & CAN_ICR_RI) {
@@ -859,6 +861,7 @@ uint8_t PC_CAN_checksum(uint8_t *rxbuff,int ilen)
 }
 
 int PC_CAN_bad_receives=0;
+int PC_CAN_good_receives=0;
 int CANProcessCommand(uint8_t *rxbuff)
 {
 	if(rxbuff[1] == 'x')
@@ -869,7 +872,7 @@ int CANProcessCommand(uint8_t *rxbuff)
 			return 0;
 		}
 	}
-
+	PC_CAN_good_receives++;
 	if(CAN_init == false)
 	{
 		CAN_send_init();
@@ -887,6 +890,7 @@ int CANProcessCommand(uint8_t *rxbuff)
 		codeEntered = 0;				// Same as ATBYE
 		return 2;		// So we can exit loop
 	}
+//	return 0;	// MHH:25/10/2026 Test!!!
 //	if(AC210_remote_control_port == 3) CAN_snd_msg.ID |= CAN_EXTEND_ID_USAGE;		// MHH:29/09/2026
 	CAN_snd_msg.DLC = rxbuff[4];
 	CAN_snd_msg.Type = 0;		// Not CAN_REMOTE_MSG

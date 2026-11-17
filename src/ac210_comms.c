@@ -1197,7 +1197,15 @@ void AC210_PC_ChangeBaud(int baud_rate)
 {
 	AC210_uart0_wait();	// This waits until output buffer is empty.
     wait_ms(40);
-    Chip_UART_SetBaud(LPC_UART0, baud_rate);
+    if(baud_rate > 115200)		// Claude 15/11/2026 (10181). 230400 / 460800 need the fractional divider (PCLK 24 MHz:
+    {							// integer divider gives 250000 / 500000), see ATXBAUD
+    	Chip_UART_SetBaudFDR(LPC_UART0, baud_rate);
+    }
+    else
+    {
+    	LPC_UART0->FDR = (UART_FDR_MULVAL(1) | UART_FDR_DIVADDVAL(0));	// FDR off again: 19200 / 115200 as before
+    	Chip_UART_SetBaud(LPC_UART0, baud_rate);
+    }
 //    RingBuffer_Flush(&U0_rxring);	// MHH:11/08/2023
     wait_ms(40);
     if(Debug_val)

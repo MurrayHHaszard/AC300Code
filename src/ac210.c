@@ -493,7 +493,7 @@ void AC210_ms_display(char *desc,uint32_t ms)
 //-----------------------------------------------------------------------------
 //E=%d WriteStatsRec: Log_checkpoint: _flash_2: setOutput: ,"startTest:State_StartFastTest
 // Set_tState:Drive:1900 cancelTest: setIdle: Set_cState:Hist4:C_BRAKE:'+' State_StartFastTest:
-//cancelTest:reset:]set:Set_dState:'X':A:ERR Param Slider
+//cancelTest:reset:]set:Set_dState:'X':A:ERR Param Slider :A:PLOG
 void loadParameters(void);
 int main(void) {
 

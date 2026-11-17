@@ -174,9 +174,6 @@ extern MotorDriveState dState;
 extern WORD currentState;
 extern WORD Auto_throttle;
 
-extern uint8_t BL_command;
-extern uint8_t BL_speed;
-
 extern BYTE RC_S_mode_byte;	// MHH:10/06/2025
 
 //#define NOT_ACTIVE_SECS		(50*2)			// 2 secs
@@ -278,8 +275,13 @@ void AC210_eelog(void)
     {
     	if(M8_data.current < 12) M8_data.current = 0;	// stored in hundreths of an amp.
 //        M8_data.pwm_val = 0;
-    	if(operatingMode () > TAKEOFF || operatingMode() < HOLD) Engine_rpm_change_in_five_ticks = 0;
-        M8_data.pwm_val = (uint8_t)(Engine_rpm_change_in_five_ticks);	// MHH:30/01/2026
+//    	if(operatingMode () > TAKEOFF || operatingMode() < HOLD) Engine_rpm_change_in_five_ticks = 0;
+    	int bl_delta = Engine_rpm_change_in_five_ticks;
+    	if(abs(bl_delta) < 5) bl_delta = 0;
+    	if(bl_delta > 120) bl_delta = 120;		// Have to fit inside a byte for logging
+    	if(bl_delta < -120) bl_delta = -120;		// Have to fit inside a byte for logging
+
+        M8_data.pwm_val = (uint8_t)(bl_delta);	// MHH:30/01/2026
     }
     else
     {

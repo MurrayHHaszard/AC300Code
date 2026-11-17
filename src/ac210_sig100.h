@@ -27,6 +27,8 @@ extern uint8_t Ctl_brushless_speed;
 extern bool Hub_pos_error;
 extern bool Hub_not_ready_error;
 extern uint8_t BL_flags;
+extern uint8_t BL_speed;
+extern uint8_t BL_command;
 
 float SIG100_get_hub_voltage(void);	// MHH:25/06/2025
 int AC300_get_run_number(void);		// MHH:05/07/2025

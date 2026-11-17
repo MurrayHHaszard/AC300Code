@@ -776,6 +776,7 @@ void initComms (void)
 // output a debug string
 void txDebug (const char far *mess)
 {
+	Diags_page_flush();		// Claude 15/11/2026. Text must not overtake a binary page still waiting for its ACK
     send (mess, strlen(mess));
     if(ac2_test_flag == AC2_TEST_ON)
     {
@@ -1403,7 +1404,7 @@ int PC_ReturnToContinue(void)
 //  char str1[20];
 	int c;
 
-   PRINTF("\r\n<RETURN> to continue\r\n");	// AC200CLI needs CRLF at present
+   PRINTF("\r\n<RETURN> to continue");	// AC200CLI needs CRLF at present
    AC210_uart0_wait();		// Wait for buffer to be output
    while(true)
    {
@@ -1423,6 +1424,7 @@ int PC_ReturnToContinue(void)
    }
    PC_puts("\r\n");
    wait_ms(100);	// wait for PC to output '>'
+   PC_getc();		// Clear next character, if there
    return c;
 }
 #endif
@@ -1990,6 +1992,10 @@ void AT_SYS_All(void)
 }
 //-------------------------------------------------------------------------
 #define RX_KEYWORD_MAX		32
+bool Diags_page_abort;		// Claude 14/11/2026. Binary page transfer failed or stopped by the PC, see Diags_send_UU_fbuff_page
+uint16_t Diags_page_skip;	// Claude 14/11/2026. ATXSKIP: pages the PC already has (resume)
+uint16_t Diags_raw_from;	// Claude 14/11/2026. ATXRAWFROM: raw dump resumes at this flash page
+static bool Diags_reply_pending;	// Claude 15/11/2026. A page has been sent and its ACK not yet collected
 static int 	AT_KeywordLen;
 static char AT_Keyword[RX_KEYWORD_MAX];
 static void AT_KeywordSave(void)
@@ -2014,6 +2020,8 @@ static void AT_KeywordSave(void)
 	if(c != 0) return;		// No trailing null within keyword max length - ignore
 	if(i < 3) return;		// Length too short
 	AT_KeywordLen = i;
+	Diags_page_abort = false;	// Claude 14/11/2026. A new command may start a new binary transfer
+	Diags_reply_pending = false;
 }
 //-------------------------------------------------------------------------
 static bool AT_KeywordMatch(const char *string)
@@ -2047,45 +2055,112 @@ char Serial_header[8];
 
 bool Diags_RS232_page_logic;
 
+static uint32_t Diags_xfer_baud = 115200;	// Claude 15/11/2026 (10181). ATXBAUD: rate of the next binary transfer
+static void Diags_xfer_baud_start(void)		// was AC210_PC_ChangeBaud(115200) for ATXLOAD / ATXLAST / ATXRS232TEST
+{
+	AC210_PC_ChangeBaud(Diags_RS232_page_logic ? Diags_xfer_baud : 115200);	// uuencoded stream: always 115200
+	Diags_xfer_baud = 115200;				// ATXBAUD applies to one transfer
+}
+
 uint32_t Wiki_CRC32(const uint8_t data[],size_t data_length);
 
-void Diags_send_UU_fbuff_page(int page)
+/*
+ * Claude 14/11/2026 (10180). Wait at most DIAGS_PAGE_ACK_MS for ACK/NAK and send a page at most DIAGS_PAGE_MAX_SENDS
+ * times (no reply counts as NAK), so a lost link can't leave the AC300 waiting or resending for ever. CAN from the PC
+ * (e.g. Diagnostics closing) stops at once. On failure Diags_page_abort is set: later pages and ":X" are not sent,
+ * until the next AT command clears it. Returns true if the PC acknowledged the page.
+ */
+#define		CAN	0x18					// From the PC: stop the transfer
+#define DIAGS_PAGE_ACK_MS		3000		// > PC's own timeout + resend time
+#define DIAGS_PAGE_MAX_SENDS	5
+uint32_t us_ticker_read(void);
+
+static int Diags_get_reply(uint32_t start_us,uint32_t millisecs)
 {
-	uint32_t crc32 = Wiki_CRC32(UU_fBuff,1024);
+	while((us_ticker_read() - start_us) < millisecs * 1000)
+	{
+		if(PC_RB_bytes_avail() == 0) continue;
+		int b = PC_getc();
+		if(b == ACK || b == NAK || b == CAN) return b;
+		DPRINTF("Unexpected response, b=%d\r\n",b);		// noise - keep waiting
+	}
+	return -1;
+}
+
+/*
+ * Claude 15/11/2026 (10181). Diags_send_UU_fbuff_page returns once the page is sent and the reply is collected by
+ * Diags_page_flush when the next page, ":X" or any txDebug text goes out - so the caller reads the next flash page
+ * while the PC checks this one. Still one page at a time: nothing else is sent before the ACK.
+ */
+static uint8_t Diags_page_copy[1024];	// the page waiting for its ACK (resends come from here)
+static uint32_t Diags_page_sent_us;
+static int Diags_page_sends;
+static int Diags_pending_page;
+
+static void Diags_page_send_copy(void)
+{
+	p_send(Serial_header,6);
+	p_send((char *)Diags_page_copy,1024);
+	Diags_page_sent_us = us_ticker_read();
+	Diags_page_sends++;
+}
+
+bool Diags_page_flush(void)		// Wait for the reply to the page in flight (resend if needed). False if failed.
+{
+	if(!Diags_reply_pending) return !Diags_page_abort;
+	Diags_reply_pending = false;	// first, so DPRINTF (txDebug) below doesn't come back here
+	int page = Diags_pending_page;
+	while(true)
+	{
+		int b = Diags_get_reply(Diags_page_sent_us,DIAGS_PAGE_ACK_MS);
+		if(b == ACK)
+		{
+			DPRINTF("page=%d ACK\r\n",page);
+			return true;
+		}
+		if(b == CAN)
+		{
+			DPRINTF("page=%d, stopped by PC\r\n",page);
+			break;
+		}
+		if(Diags_page_sends >= DIAGS_PAGE_MAX_SENDS)
+		{
+			DPRINTF("page=%d, no ACK after %d sends, giving up\r\n",page,Diags_page_sends);
+			break;
+		}
+		Serial_header[1] = 'R';		// For Resend
+		DPRINTF("page=%d, %s, resending\r\n",page,(b == NAK) ? "NAK" : "timeout");
+		Diags_page_send_copy();
+	}
+	Diags_page_abort = true;
+	return false;
+}
+
+bool Diags_send_UU_fbuff_page(int page)
+{
+	if(Diags_page_abort) return false;
+	if(Diags_page_skip > 0)			// resume: the PC has this page from the failed attempt
+	{
+		Diags_page_skip--;
+		return true;
+	}
+	if(Diags_page_flush() == false) return false;	// the previous page failed
+	memcpy(Diags_page_copy,UU_fBuff,1024);
+	uint32_t crc32 = Wiki_CRC32(Diags_page_copy,1024);
 	Serial_header[0] = ':';
 	Serial_header[1] = 'C';		// For CRC32
 	uint32_t *uip = (uint32_t *)(Serial_header+2);
 	*uip = crc32;
-	p_send(Serial_header,6);
-	p_send((char *)UU_fBuff,1024);
-	while(true)
-	{
-		while(PC_RB_bytes_avail() == 0);
-		int b = PC_getc();
-		//		int b = PC_getc_timeout(1000);
-		if(b == ACK)
-		{
-//			ACK_count++;
-			DPRINTF("page=%d ACK\r\n",page);
-			return;
-		}
-		if(b == NAK)
-		{
-			Serial_header[1] = 'R';		// For Resend
-			DPRINTF("page=%d, NAK, resending\r\n",page);
-			p_send(Serial_header,6);
-			p_send((char *)UU_fBuff,1024);
-		}
-		else
-		{
-			DPRINTF("Unexpected response, page=%d, b=%d\r\n",page,b);
-		}
-	}
-
+	Diags_page_sends = 0;
+	Diags_pending_page = page;
+	Diags_page_send_copy();
+	Diags_reply_pending = true;
+	return true;
 }
 
 void AC300_RS232_exit(void)
 {
+	if(Diags_page_flush() == false) return;	// Claude 14/11/2026. PC has gone or asked to stop (15/11: last page's ACK)
 	DPRINTF("Normal exit\r\n");
 	PC_putc(':');
 	PC_putc('X');
@@ -2102,7 +2177,7 @@ void AC300_RS232_test(void)
 		{
 			*ip++ = count++;
 		}
-		Diags_send_UU_fbuff_page(page);
+		if(Diags_send_UU_fbuff_page(page) == false) break;
 	}
 	AC300_RS232_exit();
 }
@@ -2130,6 +2205,13 @@ static int ATX_command(BYTE query,WORD *p_value)
 	    break;
 
 	case 'B':
+	    if (AT_KeywordMatch("XBAUD"))	// Claude 15/11/2026 (10181). Next ATXLOAD / ATXLAST / ATXRS232TEST at n*100 baud
+	    {
+		    if(query) return ATX_ERROR;
+		    if(value != 1152 && value != 2304 && value != 4608) return ATX_ERROR;
+		    Diags_xfer_baud = (uint32_t)value * 100;
+	        return ATX_OK;
+	    }
 	    if (AT_KeywordMatch("XBOOT"))
 	    {
 			printf("Closing comport\r\n");
@@ -2384,19 +2466,22 @@ static int ATX_command(BYTE query,WORD *p_value)
 		    if(query) return ATX_ERROR;
 	    	AC210_range.last_run = value;
 		    txDebug("OK\r\n");
-		    AC210_PC_ChangeBaud(115200);
+		    Diags_xfer_baud_start();		// Claude 15/11/2026. Was AC210_PC_ChangeBaud(115200)
 	    	AC210_ee_load_range();
 		    AC210_PC_ChangeBaud(19200);
+		    Diags_page_skip = 0;			// Claude 14/11/2026. ATXSKIP applies to one transfer
 			return ATX_RETURN;
 	    }
 	    if (AT_KeywordMatch("XLOAD"))
 	    {
 		    if(query) return ATX_ERROR;
 		    txDebug("OK\r\n");
-		    AC210_PC_ChangeBaud(115200);
+		    Diags_xfer_baud_start();		// Claude 15/11/2026. Was AC210_PC_ChangeBaud(115200)
 	    	AC210_ee_load(value);
 			AC210_watchdog_active = true;	// MHH:04/08/2023
 		    AC210_PC_ChangeBaud(19200);
+		    Diags_page_skip = 0;			// Claude 14/11/2026. ATXSKIP / ATXRAWFROM apply to one transfer
+		    Diags_raw_from = 0;
 			return ATX_RETURN;
 	    }
 	    if (AT_KeywordMatch("XLOG"))
@@ -2507,6 +2592,12 @@ static int ATX_command(BYTE query,WORD *p_value)
 
 
 	case 'R':
+	    if (AT_KeywordMatch("XRAWFROM"))	// Claude 14/11/2026 (10180). Next ATXLOAD=65532 (raw): start at flash page n,
+	    {									// without the EEPROM pages (PC resumes a failed raw save)
+		    if(query) return ATX_ERROR;
+		    Diags_raw_from = value;
+	        return ATX_OK;
+	    }
 	    if (AT_KeywordMatch("XRESET"))
 	    {
 		    if(query) return ATX_ERROR;
@@ -2524,7 +2615,7 @@ static int ATX_command(BYTE query,WORD *p_value)
 	    if (AT_KeywordMatch("XRS232TEST"))
 	    {
 	    	txDebug("OK\r\n");
-		    AC210_PC_ChangeBaud(115200);
+		    Diags_xfer_baud_start();		// Claude 15/11/2026. Was AC210_PC_ChangeBaud(115200)
 	    	AC300_RS232_test();
 			AC210_watchdog_active = true;
 		    AC210_PC_ChangeBaud(19200);
@@ -2545,6 +2636,12 @@ static int ATX_command(BYTE query,WORD *p_value)
 	    break;
 
 	case 'S':
+	    if (AT_KeywordMatch("XSKIP"))	// Claude 14/11/2026 (10180). Next ATXLOAD / ATXLAST: don't send the first n pages
+	    {
+		    if(query) return ATX_ERROR;
+		    Diags_page_skip = value;		// (PC resumes a failed binary transfer, Diagnostics 1.136)
+	        return ATX_OK;
+	    }
 	    if (AT_KeywordMatch("XSAVE"))
 	    {
 	    	txDebug("OK\r\n");
@@ -2826,6 +2923,15 @@ static int Process_non_indexed_commands(BYTE query,WORD *p_value)
         	}
         	Diags_AT(value);
         	return ATX_OK;
+        }
+        if (AT_KeywordMatch("DIAGS_BIN"))	// Claude 14/11/2026 (10180). As ATDIAGS=0, but a binary page with CRC32
+        {
+            Stat_Rec.pc_prog = 2;
+        	if (query || value != 0) break;
+           	txDebug("OK\r\n");
+           	Diags_page_skip = 0;
+           	Diags_send_rec_all_bin();
+           	return ATX_RETURN;
         }
         if (AT_KeywordMatch("DIAGVER"))
         {

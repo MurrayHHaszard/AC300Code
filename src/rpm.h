@@ -29,4 +29,6 @@ void initSpeed (void);
 //WORD magSpeed (void);		// MHH:20/11/2020
 WORD Get_RPM(void);
 BYTE ignSpeed (ULONG *rpm);
+extern uint16_t Engine_rpm;
+extern int16_t Engine_rpm_change_in_five_ticks;
 #endif

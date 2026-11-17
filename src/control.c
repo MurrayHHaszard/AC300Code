@@ -34,8 +34,11 @@ Changes:
 #include "drive.h"
 #include "leds.h"
 #include "log.h"
+#include "rpm.h"
 
 #include "ac210_sig100.h"
+
+#include "cs_control.h"
 
 /*
     Hold and Cruise modes are sometimes combined..
@@ -558,6 +561,8 @@ int16_t Engine_rpm_change_in_five_ticks;
 #define SPEED_MEDIUM_PCT	67
 #define SPEED_SLOW_PCT		22
 
+
+#ifdef MH_X_BRUSHLESS_CONTROL
 void Brushless_control(void)	// See if controlling speed helps
 {
 	int i;
@@ -659,7 +664,10 @@ void Brushless_control(void)	// See if controlling speed helps
 
 
 //	int prop_rpm = Prop_rpm_1dec / 10;
-	int engine_rpm = Engine_rpm_1dec / 10;
+	int engine_rpm = Get_RPM();
+
+
+#ifdef MH_YYY		// MHH:15/10/2026. Delta logic moved to RPM ISR routine as was not smooth here
 	int16_t bl_oldest_rpm =  BL_rpm_t[BL_rpm_ix];
 //	BL_rpm_t[BL_rpm_ix++] = prop_rpm;
 	BL_rpm_t[BL_rpm_ix++] = engine_rpm;
@@ -668,7 +676,7 @@ void Brushless_control(void)	// See if controlling speed helps
 	Engine_rpm_change_in_five_ticks = (engine_rpm - bl_oldest_rpm);
 	if(Engine_rpm_change_in_five_ticks > 120) Engine_rpm_change_in_five_ticks = 120;		// Have to fit inside a byte for logging
 	if(Engine_rpm_change_in_five_ticks < -120) Engine_rpm_change_in_five_ticks = -120;		// Have to fit inside a byte for logging
-
+#endif
 
 //#define SPEED_FAST		10
 //#define SPEED_MEDIUM	3
@@ -751,59 +759,6 @@ void Brushless_control(void)	// See if controlling speed helps
 				}
 			}
 
-
-
-
-#ifdef MH_XXX
-		{
-			int motor_speed_pct = 0;
-			int sw_option = (Ctl_setspeed - engine_rpm + 100) / 20;	// MHH:20/02/2026  So if engine_rpm == setspeed then sw_option = 100/20 = 5
-			//			int sw_option = rpm_to_overspeed / 20;
-			if(sw_option < 0) sw_option = 0;
-			switch(sw_option)
-			{
-			case 0:		// 0-19		(5800 - 5781)
-			case 1:		// 20-39 	(5780 - 5761)
-			case 2:		// 40-59	(5760 - 5741) (Start of dead band)
-				if(Engine_rpm_change_in_five_ticks >= -10) motor_speed_pct = SPEED_MEDIUM_PCT;
-				if(Engine_rpm_change_in_five_ticks >= 0) motor_speed_pct = SPEED_FAST_PCT;
-				break;
-
-			case 3:		// 60-79	(5740 - 5721)
-			case 4:		// 80-99 	(5720 - 5701)
-				if(Engine_rpm_change_in_five_ticks >= 0) motor_speed_pct = SPEED_SLOW_PCT;
-				if(Engine_rpm_change_in_five_ticks >= 5) motor_speed_pct = SPEED_MEDIUM_PCT;
-				if(Engine_rpm_change_in_five_ticks >= 20) motor_speed_pct = SPEED_FAST_PCT;
-				break;
-
-			case 5:		// 100-119	(5700 - 5681) (On or below setspeed)
-			case 6:		// 120-139	(5680 - 5661)
-			case 7:		// 140-159	(5660 - 5641) (up to deadband)
-//				if(Engine_rpm_change_in_five_ticks >= 10) motor_speed_pct = SPEED_SLOW_PCT;
-				if(Engine_rpm_change_in_five_ticks >= 20) motor_speed_pct = SPEED_MEDIUM_PCT;
-				if(Engine_rpm_change_in_five_ticks >= 30) motor_speed_pct = SPEED_FAST_PCT;
-				break;
-
-			default:	// 160-200	(5640 - 5600) (Below deadband)
-				if(BL_delta_angle >= (-0.2F))
-				{
-//					if(Engine_rpm_change_in_five_ticks >= 10) motor_speed_pct = SPEED_SLOW_PCT;
-					if(Engine_rpm_change_in_five_ticks >= 20) motor_speed_pct = SPEED_MEDIUM_PCT;
-					if(Engine_rpm_change_in_five_ticks >= 30) motor_speed_pct = SPEED_FAST_PCT;
-				}
-				else
-				{
-					if(BL_delta_angle < (-0.5F))
-					{
-						if(Engine_rpm_change_in_five_ticks >= 50) motor_speed_pct = SPEED_MEDIUM_PCT;
-					}
-					else
-					{
-						if(Engine_rpm_change_in_five_ticks >= 40) motor_speed_pct = SPEED_MEDIUM_PCT;
-					}
-				}
-			}
-#endif
 			if(motor_speed_pct != 0)
 			{
 //				Ctl_brushless_speed = Get_speed_from_ratio(motor_speed_pct);
@@ -1024,8 +979,266 @@ void Brushless_control(void)	// See if controlling speed helps
 	}
 }
 
+#endif
 
-//#endif
+//=============================================================================================================================================
+#ifndef MH_CLAUDE_CONTROL
+
+#define ANGLE_TBL_MAX	20
+float Angle_tick_tbl[ANGLE_TBL_MAX];
+#define RPM_TBL_MAX		10
+uint16_t RPM_tbl[RPM_TBL_MAX];
+uint16_t RPM_tbl_ix=0;
+uint16_t Angle_tbl_ix=0;
+int16_t RPM_delta=0;
+float Angle_delta=0;
+float Angle_delta_lagged=0;
+float Angle_lagged=0;
+float Current_angle=0;
+void RPM_update_history(void)
+{
+	if(ps.parms[BL_ENABLED] != 1) return;	// Brushless?
+
+	RPM_tbl_ix %= RPM_TBL_MAX;
+	uint16_t rpm_max_ticks_ago = RPM_tbl[RPM_tbl_ix];
+	RPM_tbl[RPM_tbl_ix] = Engine_rpm;
+	RPM_delta = Engine_rpm - rpm_max_ticks_ago;
+	Engine_rpm_change_in_five_ticks = (RPM_delta * 5) /RPM_TBL_MAX;
+	RPM_tbl_ix++;
+
+	int ix0 = Angle_tbl_ix % ANGLE_TBL_MAX;
+	Current_angle = AC210_SIG100_angle();
+	if(Angle_tbl_ix > ANGLE_TBL_MAX)
+	{
+		float angle_max_ticks_ago = Angle_tick_tbl[ix0];
+		int ix1 = (Angle_tbl_ix -10) % ANGLE_TBL_MAX;
+		Angle_lagged = Angle_tick_tbl[ix1];
+		Angle_delta = Current_angle - Angle_lagged;
+		Angle_delta_lagged = Angle_lagged - angle_max_ticks_ago;
+	}
+	Angle_tick_tbl[ix0] = Current_angle;
+	Angle_tbl_ix++;
+}
+#endif
+//----------------------------------------------------------------------------------------------------------------------------------------------
+CS_CTRL_T CS_control;
+bool CS_init_done=false;
+static int CS_hub_version = -1;		// Claude 13/11/2026. Hub firmware / Maxon mode the profile was set for
+static bool CS_hub_maxon;
+float Sig100_GetBladeAngle(int encoder_pos);
+void Brushless_control(void)	// See if controlling speed helps
+{
+
+	Set_cState(C_IDLE,201);		// MHH:30/01/2026
+
+	OpMode mode = operatingMode ();
+
+	if(mode < HOLD || mode > TAKEOFF) return;
+
+	WORD ac200_switches = p_GetAC200_Switches(false);	// This check because had situation where it was in manual mode but still doing automatic control!
+	if(ac200_switches & MANUAL_SWITCH_BIT)
+	{
+// Can happen legitimately as takes a number of ticks to recognise manual.
+		//		L2PRINTF("Brushless_control:MANUAL switch bit on!!!!\r\n");
+		BL_ctl_state = BL_IDLE;
+//        Set_BL_dState(MD_IDLE,10);	// MHH:30/01/2026
+        return;
+	}
+
+	int hub_version = getParameter(BL_HUB_SOFTWARE_VERSION);	// Claude 13/11/2026. From the start-up handshake
+	bool hub_maxon = (Enc_data.sw_flags & 4) != 0;				// Maxon internal speed control requested (hub sw_flags bit 2)
+	if(hub_version != CS_hub_version || hub_maxon != CS_hub_maxon)
+	{
+		CS_init_done = false;		// Hub changed (or first call): set up again with its profile
+	}
+	if(CS_init_done == false)
+	{
+		CS_InitDefaults(&CS_control);
+		CS_SetHubProfile(&CS_control,hub_version,hub_maxon);
+		CS_hub_version = hub_version;
+		CS_hub_maxon = hub_maxon;
+		L2PRINTF("CS hub profile %d (hub %d, Maxon %d)\r\n",CS_control.hub_profile,hub_version,hub_maxon);
+		CS_control.pos_to_angle = Sig100_GetBladeAngle;
+		CS_control.start_persist_s = 0.3F;			// MHH:03/11/2026 was 0.5 (Russell's tests); 10/11/2026 back to 0.3: customers less gusty, bench run 973 (0.5: cruise outside deadband 11 -> 22 s)
+		CS_init_done = true;
+	}
+	// Claude 17/11/2026. Read every tick (were set only at start-up / hub change above): a change made with AC200User or
+	// at the terminal now takes effect at once, not at the next restart. Bench 17/11/2026: SF_MAG_SPEED changed 243 -> 254
+	// without a restart, the controller kept 2.43 and governed the engine ~255 rpm high (suite runs 1152-1157, peak 6016).
+	int overspeed = ps.parms[BL_CONTROL];
+	if(overspeed < 2000 || overspeed > 9000) overspeed = 8000;
+	CS_control.max_rpm = (float) overspeed;			// 5800 for  Rotax 916
+	float scaling_factor_percent = getParameter(SF_MAG_SPEED);
+	if(scaling_factor_percent >= 50) CS_control.prop_gear_ratio = scaling_factor_percent/100;		// = 2.54f; (0 = not set: keep the last / default)
+	if(Enc_data.cal_motor_ratio > 0) CS_control.pitch_gear_ratio = ((float)Enc_data.cal_motor_ratio/100);	// = 190.11f; (not used by cs_control at present)
+	CS_control.deadband_rpm = getParameter (PI_DEAD_BAND); 				// = 60.0f;
+	CS_control.motor_rpm = BL_enc_rpm * 50;			// Note: pitch motor rpm not used in control logic.
+	if(BL_command == '-') CS_control.motor_rpm = -CS_control.motor_rpm;
+	CS_control.encoder_pos = Encoder_Pos;
+	CS_control.stop_flags = BL_flags;
+	CS_control.target_rpm = (float)	Ctl_setspeed;
+    int rpm_per_degree = getParameter(CTL_RPM_PER_TICK_X10);	// Re-purpose this parameter
+    if(rpm_per_degree == 0) rpm_per_degree = 130;
+    CS_control.rpm_per_deg_ss = (float) rpm_per_degree;	//        = 130.0f;   /* log 0197/0792: 100-180 rpm per degree */
+	// Claude 17/11/2026. Take-off run-up move (cs_control.c): static full-throttle blade angle at the take-off rpm.
+	// Used only if it lies between the hub's fine and coarse stop angles (all with 1 decimal place); else 0 = not used.
+	int takeoff_angle = getParameter(BL_TAKEOFF_ANGLE);
+	int fine_stop_angle = (int16_t)getParameter(BL_FINE_STOP);
+	int coarse_stop_angle = (int16_t)getParameter(BL_COARSE_STOP);
+	CS_control.takeoff_angle_deg = (takeoff_angle > fine_stop_angle && takeoff_angle < coarse_stop_angle) ? (float)takeoff_angle / 10.0f : 0.0f;
+
+	int32_t pitch_motor_tgt_rpm = CS_Update(&CS_control);
+	Engine_rpm_change_in_five_ticks = (int16_t)CS_control.rpm_change_100ms;
+
+//	DPRINTF("nrpm:%d\r\n",pitch_motor_tgt_rpm);
+	int arpm = abs(pitch_motor_tgt_rpm);
+	if(arpm > 7000) arpm = 7000;
+	if(arpm < 500)
+	{
+		Ctl_brushless_speed = 0;
+		Set_cState(C_IDLE,202);
+//		DPRINTF("Idle\r\n");
+		return;
+	}
+	int pitch_motor_speed_pct = (arpm  * 100) / 7000;			// So rpm of 7000 = 100%
+	if(pitch_motor_speed_pct < 5) pitch_motor_speed_pct = 5;			// Minimum Hub will accept
+//	DPRINTF("PS:%d\r\n",pitch_motor_speed_pct);
+	Ctl_brushless_speed = pitch_motor_speed_pct |= 128;
+	if(pitch_motor_tgt_rpm <= 0)		// Going FINE?
+	{
+		Set_cState(C_FINER,202);		// MHH:30/01/2026
+	}
+	else
+	{
+		Set_cState(C_COARSER,205);		// MHH:30/01/2026
+	}
+}
+void Control_RPM_update(uint32_t period_us)
+{
+	CS_PropRevolution(&CS_control,period_us);
+}
+
+int Sig100_pos_from_angle(float angle);
+#ifdef MH_TEST_CONTROL
+
+void Brushless_control(void)	// See if controlling speed helps
+{
+
+	Set_cState(C_IDLE,201);		// MHH:30/01/2026
+
+	OpMode mode = operatingMode ();
+
+	if(mode < HOLD || mode > TAKEOFF) return;
+
+	WORD ac200_switches = p_GetAC200_Switches(false);	// This check because had situation where it was in manual mode but still doing automatic control!
+	if(ac200_switches & MANUAL_SWITCH_BIT)
+	{
+// Can happen legitimately as takes a number of ticks to recognise manual.
+		//		L2PRINTF("Brushless_control:MANUAL switch bit on!!!!\r\n");
+		BL_ctl_state = BL_IDLE;
+//        Set_BL_dState(MD_IDLE,10);	// MHH:30/01/2026
+        return;
+	}
+
+
+//	int engine_rpm_per_10tick = ps.parms[CTL_RPM_PER_TICK_X10];		// MHH:12/02/2025. rpm per tick * 10;
+//	BL_scale_percent = ps.parms[BL_SCALE_PCT];
+
+	int engine_rpm = Get_RPM();
+
+
+	int overspeed = ps.parms[BL_CONTROL];
+	if(overspeed < 2000 || overspeed > 9000) overspeed = 0;
+
+/*
+ * OK, first step is to find target rpm and figure out how far we are away....
+ *
+ */
+	int engine_difference = Ctl_setspeed - engine_rpm;
+
+	DPRINTF("RPM:%d,diff:%d\r\n",engine_rpm,engine_difference);
+
+	//	int engine_adiff = abs(engine_difference);
+
+//	int percent_diff = (engine_difference * 1000) / Ctl_setspeed;		// implied decimal point
+
+#define RPM_PER_DEGREE		100.0F				// This could become the main parameter
+//#define RPM_PER_DEGREE		50.0F
+
+	float target_gradient = (float)(engine_difference * 10) / RPM_PER_DEGREE; 	// So a difference of 100 would mean a target_gradient of 10 (rpm per 200 millisecs)
+
+// Note: we could increase target gradient in special circumstances, such as close to rpm limit.
+
+//	int percent_adiff = abs(percent_diff);
+
+/*
+ * We want the gradient to the target to get less as we get closer to the target. So, if we are within 1% we want the change within 10 ticks to be 20
+ * at 2%, we want change in 10 ticks to be 40, at 3% 60 and so on. We can look at speed changing as square of difference, or (say) doubling every percent.
+ * The important thing is a target rate depending on distance from target.
+ */
+//	int target_gradient = percent_diff;		// because of implied decimal point. So 50 = 1% of 5000 = 50000/5000 = 10 rpm/10 ticks, 50 rpm / sec.
+
+/* Next thing is to find actual rpm gradient.
+ *
+ */
+
+	float rpm_actual_delta = (float)RPM_delta;				// Actual difference in RPM over last 10 ticks.
+	float blade_delta = Angle_delta_lagged;				// Change in angle of blade in prev 10 Ticks.
+	float blade_delta_rpm = -RPM_PER_DEGREE * blade_delta;		// Because about 100 rpm per degree, but this may just be Rotax which is geared. Consider Prop_rpm
+	                                                // as alternative.
+	float angle_rpm_change = blade_delta_rpm;
+	float external_rpm_change = rpm_actual_delta - angle_rpm_change;
+	if(abs(external_rpm_change < 10)) external_rpm_change = 0;
+	DPRINTF("e:%.0f,r:%.0f,a:%.0f\r\n",external_rpm_change,rpm_actual_delta,angle_rpm_change);
+/*
+ * Think about using Encoder_rpm. Possibly instead of angle change, even lagged.
+ *  Eg, if absolute rpm change/ 10 ticks is > a function of encoder_rpm, for say 5 ticks, then need to take action.
+ *
+ *  Suppose gearing of 190:1,
+ *
+ *
+ */
+
+
+	float needed_angle_rpm_change = target_gradient - external_rpm_change;	// May need to multiply this by 2
+	float angle_change_needed = -needed_angle_rpm_change/RPM_PER_DEGREE;	// 1 degree per 100 rpm change
+	angle_change_needed *= 2;		// ???
+	float target_blade_angle = Current_angle + angle_change_needed;		// This should be the blade angle in degrees after the next 200 ms.
+	DPRINTF("T:%.1f,C:%.1f,A:%.1f\r\n",target_blade_angle,Current_angle,angle_change_needed)
+
+	/*
+	 * So, the next step is to work out the encoder position for the target_blade_angle, then the number of revolutions needed within the 200 ms, multiply that
+	 * by 5 * 60 to get required rpm, then set the required pitch motor direction and speed
+	 */
+
+	int next_encoder_pos = Sig100_pos_from_angle(target_blade_angle);
+	int change_encoder_pos = next_encoder_pos - Encoder_Pos;			// Not sure about sign
+	int pitch_motor_tgt_rpm = change_encoder_pos * (5 * 60/4);
+	DPRINTF("nrpm:%d,cep:%d\r\n",pitch_motor_tgt_rpm,change_encoder_pos);
+	int arpm = abs(pitch_motor_tgt_rpm);
+	if(arpm > 7000) arpm = 7000;
+	if(arpm < 500)
+	{
+		Ctl_brushless_speed = 0;
+		Set_cState(C_IDLE,202);
+		DPRINTF("Idle\r\n");
+		return;
+	}
+	int pitch_motor_speed_pct = (arpm  * 100) / 7000;			// So rpm of 7000 = 100%
+	if(pitch_motor_speed_pct < 5) pitch_motor_speed_pct = 5;			// Minimum Hub will accept
+	DPRINTF("PS:%d\r\n",pitch_motor_speed_pct);
+	Ctl_brushless_speed = pitch_motor_speed_pct |= 128;
+	if(pitch_motor_tgt_rpm >= 0)		// Going FINE?
+	{
+		Set_cState(C_FINER,202);		// MHH:30/01/2026
+	}
+	else
+	{
+		Set_cState(C_COARSER,205);		// MHH:30/01/2026
+	}
+}
+
+#endif
 ControlState Ctl_cstate;
 WORD MH_last_setspeed;
 //WORD Ctl_pwm_slow_count;
@@ -1047,366 +1260,6 @@ extern uint8_t Soft_mode;
 #define SOFTMODE_STARTING	2
 #define SOFTMODE_BRAKING	3
 
-#ifdef MH_YYY
-void Ctl_logic(void)
-{
-//	int projected_rpm,projected_err,abs_projected_err;
-	int projected_rpm,projected_err;	// MHH:23/11/2020
-
-	int deadband;
-//	int rpm_tolerance;
-
-//	BYTE t = Trace("Ctl_logic");
-
-// Note: may need to take action if set speed changes and not in state zero.
-
-// So if Ctl_rpm_per_tick = 16, and CTL_PWM_SPREAD_TICKS = 32, then we get (16 * 1000)/32 = 500 (3 decimal places)
-
-// OK, we still need to think of the best way to use the values Ctl_estimated_current-rpm and Ctl_estimated_finish_rpm.
-// At this stage they are not combined with actual_rpm, so not really given a chance to compare with reality.
-// Perhaps we need to consider change? Eg, what if we saved all the projected rpm values in a table, then we could compare
-// expected change with actual. Another approach is to have a value which reflects how much change the current pwm history
-// holds. eg, add to it every time we have a power tick, and subtract from it how much is 'used up' in that tick at same time.
-// The 'used up' portion is calculated from the Ctl_rpm_history_change function.
-
-// OK, so we now have a value for what we think that the RPM change will be from the recent history of pwm changes, called
-// Ctl_history_total_rpm_change. So we can add that to the current actual speed and get a projected speed.
-// We should also be able to get a projected time for that speed, by knowing the oldest power tick and adding lag + spread to it.
-
-// As far as having a set of estimated RPM speeds, we could compare that to the set of actual speeds to see if changes are more
-// or less than expected. We would need to remember last calculated values for (say) up to a history of 10 (fifth of second).
-// We could use the difference in rates to calculate a value to include when trying to work out what rpm will be at end of
-// time period.
-
-// This means that we may only need to store the same number of values of actual rpm, as we are really only interested in
-// the value of change compared to expected change.
-
-// So, logic might be something like:
-
-/*
-		Calculated expected_change_rpm over last 5 ticks
-		Calculate actual_change_rpm over last 5 ticks.
-
-		Calculate expected end rpm given pwm history.
-		Adjust that value with any changes between expected_rpm and actual, taking into account time value returned from history check
-
-		if expected_end_rpm less than set_rpm by more than tolerance
-			do a power_tick towards target
-			return
-		end if
-
-		if expected_end_rpm greater than target by more than tolerance then
-			do a power tick towards target.
-			return
-		endif
-
-*/
-//    Ctl_rpm_per_spread_tick = (Ctl_rpm_per_tick_x10 * CTL_100) / CTL_PWM_SPREAD_TICKS;
-
-//	Ctl_setspeed = (int)(setSpeed/RPMFACTOR);
-//	Ctl_actualspeed = (int)(actualSpeed/RPMFACTOR);
-
-    OpMode mode = operatingMode();
-    if(mode == MANUAL)	// MHH:17/05/2023
-    {
-        Set_cState(C_IDLE,300);
-        Set_dState(MD_IDLE,200);
-//        currentControl = 0;	// Fasttrack
-        Set_current_control(0,30);
-//        BL_ctl_state = BL_IDLE;
-        Ctl_move_ticks = 0;
-        return;
-    }
-
-
-	Ctl_setspeed = (int)(setSpeed);
-	Ctl_actualspeed = (int)(actualSpeed);
-
-
-    deadband = getParameter (PI_DEAD_BAND);
-    int deadband2 = getParameter(PI_DEAD_BAND2);	// MHH:28/03/2023
-    if(deadband2 != 0)
-    {
-    	int pi_lo_rpm = getParameter(PI_LO_RPM);
-    	int pi_hi_rpm = getParameter(PI_HI_RPM);
-    	if(Ctl_setspeed > pi_lo_rpm && Ctl_setspeed < pi_hi_rpm)
-    	{
-    		deadband = deadband2;
-    	}
-    }
-    if (mode == HOLD)
-    {
-    	if (isSlaveProp())
-        {
-    		if(isSlaveCommsActive())
-    		{
-//    			WORD slave_deadband = getParameter(CT_SLAVE_DEADBAND);
-
-    			WORD slave_deadband = getSlaveDeadband();	// MHH:30/11/2020
-    			slave_deadband = MIN(slave_deadband,deadband);
-
-    			slave_deadband = MAX(slave_deadband,10);
-    			deadband = slave_deadband;
-    		}
-        }
-    }
-
-	Ctl_deadband = deadband;		// This used for logging
-    if(ps.parms[BL_ENABLED] == 1)
-    {
-    	Brushless_control();
-        Set_current_control(0,40);
-//    	currentControl = 0;	// To be sure...
-		return;
-    }
-
-
-
-//    currentControl = 	getParameter (MC_MAX_PWM);	// default MHH:09/08/2018
-//    currentControl = 255;		// MHH:30/01/2024
-//    Set_current_control(255,50);	// MHH:22/05/2024
-
-//    if(Drive_wait_flag == false)	// MHH:02/11/2018. FINE LED light was flashing Orange as it tried to go FINE when FINE STOP on.
-// MHH:09/05/2024. Remove this test because it is possible that the current "bump" bug cause this.
-
-
-
-	/*
-	 *  MHH:10/05/2024. Because have added 'D' factor, look at putting a maximum on history change. Perhaps NCV/2 max?
-	 */
-
-#define MH_PD_ONLY
-#ifdef MH_PD_ONLY		// MHH:18/05/2024
-	projected_rpm = Ctl_actualspeed;
-#endif
-
-
-// Note we will need to convert Prop_rpm_delta_per_tick to engine rpm...
-#ifdef MH_XXX
-    if(abs(Prop_rpm_delta_per_tick) >1)
-    {
-        DPRINTF("A:%d,P:%d,D=%d,U=%d,r=%d,p=%d\r\n",Ctl_actualspeed,projected_rpm,Prop_rpm_delta_per_tick,Prop_rpm_delta_usecs,Prop_rpm_delta,Prop_rpm_delta_prev);
-    }
-#endif
-/*
- * Note: This PD control could also be done using just prop rpm, not engine rpm, with limits converted to prop rpm limits
- */
-
-    int delta_factor = 0;
-	int ncv = getParameter(CTL_RPM_PER_TICK_X10);
-	if(ncv < 1000) ncv = 1025;		// default
-	int delta_weighting = ncv % 1000;
-	int ncv_speed_option = ncv/1000;
-	if(ncv_speed_option > 3) ncv_speed_option = 1;		// to be sure...
-
-    if(abs(Engine_rpm_delta_per_tick_1dec) >= 20)
-    {
-    	//e.g. 1050 would mean 50% delta weighting. 1025 = 25% etc.
-    	delta_factor = Engine_rpm_delta_per_tick_1dec * delta_weighting;	// eg * 25 / 100 = divide by 4
-    	delta_factor /=100;			// finish weighting delta
-        projected_rpm += delta_factor;
-    }
-	projected_err = Ctl_setspeed - projected_rpm;
-
-//#define MH_PD_CTL_DEBUG
-#ifdef MH_PD_CTL_DEBUG
-//	if(abs(projected_err) >= deadband || cState != C_IDLE)
-	{
-        int millisecs = LogData.log_ticks * 20;
-        int secs = millisecs/1000;
-        int minutes = secs/60;
-        secs %= 60;
-        int ticks = LogData.log_ticks % 50;
-        char dir = ' ';
-        if(abs(projected_err) >= deadband)
-        {
-        	if(projected_err > 0)
-        	{
-        		dir = '-';
-        	}
-        	else
-        	{
-        		dir = '+';
-        	}
-        }
-        DPRINTF("%d:%02d:%02d T:%d,A:%d,P=%d,D=%d,df=%d,PE=%d,%c\r\n",minutes,secs,ticks,Ctl_setspeed,
-//        		Ctl_actualspeed,Prop_int_rpm_1dec,Engine_rpm_1dec,Engine_rpm_1dec_prev,Engine_rpm_delta_per_tick_1dec,
-        		Ctl_actualspeed,projected_rpm,Engine_rpm_delta_per_tick_1dec,
-        		delta_factor,projected_err,dir);
-/*
- * int Engine_rpm_delta_per_tick_1dec;
-int Engine_rpm_1dec;
-int Engine_rpm_1dec_prev;
-int Engine_rpm_1dec_prev1;
-int Engine_rpm_delta_1dec;
- *
- */
-
-
-        DPRINTF("    rpm=%d,rpm1=%d,rpm2=%d,rpmD=%d,rpmDt=%d\r\n",
-        		Engine_rpm_1dec,Engine_rpm_1dec_prev,Engine_rpm_1dec_prev1,Engine_rpm_delta_1dec,Engine_rpm_delta_per_tick_1dec);
-
-	}
-#endif
-
-
-
-	if(abs(projected_err) < deadband)
-	{
-		Set_cState(C_IDLE,400);
-//        currentControl = 0;	// Fasttrack
-        Set_current_control(0,60);
-        Ctl_move_ticks = 0;
-		return;
-	}
-	int pwm = 255;
-	Softmode_speed_val = 1;			// Default;
-
-/*
- *  ncv hi digit	max_count
- *  1				none
- *  2				9/2 = 4
- *  3				9/3 = 3
- *  4				9/4 = 2
- */
-
-#ifdef MH_XXX				// MHH:14/01/2026
-	if(Soft_mode == SOFTMODE_STARTING)
-	{
-		if(ncv_speed_option > 1)
-		{
-			int softmode_max_count = 9/ ncv_speed_option;
-			if(Softmode_count > softmode_max_count)
-			{
-				if(abs(projected_err) < (Ctl_setspeed * 3)/100)	// projected_err < 3% setspeed?
-				{
-					Set_cState(C_IDLE,410);
-			//        currentControl = 0;	// Fasttrack
-			        Set_current_control(0,60);
-			        Ctl_move_ticks = 0;
-					return;
-				}
-			}
-		}
-	}
-#endif
-#ifdef MH_ZZZ
-
-	if(ncv_speed_option > 1)		// Reduce speed?
-	{
-		if(abs(projected_err) < (Ctl_setspeed * 3)/100)	// projected_err < 3% setspeed?
-//		if(abs(projected_err) < (Ctl_setspeed * 2)/100)	// projected_err < 2% setspeed?
-		{
-			Softmode_speed_val = ncv_speed_option;
-		}
-	}
-#endif
-	/*
-	switch(Ctl_move_ticks++)
-	{
-	case 0:
-		pwm = 100;
-		break;
-	case 1:
-		pwm = 200;
-		break;
-	case 3:
-		pwm = 255;
-		break;
-	case 4:
-		pwm = 255;
-		break;
-	default:
-		if(reduce_speed_when_close)
-		{
-			if((Ctl_move_ticks & 1) == 0)
-			{
-				pwm = 0;
-			}
-		}
-	}
-*/
-
-//	int reduce_speed_zone_high = Ctl_setspeed + 200;
-//	int reduce_speed_zone_low = Ctl_setspeed - deadband - one_pct_setspeed;
-//#define NCV				200
-//#define TARGET_NCV_SLOW		50
-//#define NCV_SLOW_FACTOR		(NCV/TARGET_NCV_SLOW)
-/*
- *  Note: We could add an extra parameter which governs speed for fast pitch change. It could be the pwm slow setting
- *  e.g. Could have a parameter in format abbb where a = % of max speed/10, and bbb = slow zone (say 200)
- *  Or, could be 2 parameters.
- */
-
-#ifdef MH_YYY
-
-#define PWM_SLOW		(64)
-	if(reduce_speed_when_close)
-	{
-#ifdef MH_XXX
-
-		if(abs(Ctl_setspeed - Ctl_actualspeed) < 200)		// arbitrary
-		{
-			if(Ctl_actualspeed > Ctl_setspeed)
-			{
-				if(delta_factor < 0)
-				{
-					pwm = PWM_SLOW;
-	//				DPRINTF("Hi:Slow\r\n");
-				}
-			}
-			else
-			{
-				if(delta_factor > 0)
-				{
-					pwm = PWM_SLOW;
-	//				DPRINTF("Lo:Slow\r\n");
-				}
-			}
-		}
-		if(abs(Ctl_setspeed - Ctl_actualspeed) < 100)		// arbitrary
-		{
-			pwm = PWM_SLOW;
-		}
-#else
-		if(cState != Ctl_slow_cstate)
-		{
-			Ctl_slow_cstate = cState;
-			Ctl_pwm_slow_count = 0;
-		}
-
-
-		if(abs(Ctl_setspeed - Ctl_actualspeed) < 200)		// arbitrary
-		{
-			if(Ctl_pwm_slow_count++ > 0)
-			{
-				pwm = PWM_SLOW;
-			}
-		}
-		else
-		{
-			Ctl_pwm_slow_count = 0;
-		}
-#endif
-	}
-#endif
-//	currentControl = pwm;	// MHH:21/05/2024
-
-    Set_current_control(pwm,70);
-	//	currentControl = 255;	// default;
-//	currentControl = 	getParameter (MC_MAX_PWM);	// default MHH:09/08/2018
-#ifdef MH_PD_ONLY
-	if(projected_err > 0)
-	{
-		Set_cState(C_FINER,500);
-	}
-	else
-	{
-		Set_cState(C_COARSER,600);
-	}
-#endif
-}
-#else
 void Ctl_logic(void)
 {
 //	int projected_rpm,projected_err,abs_projected_err;
@@ -1773,8 +1626,6 @@ void Ctl_logic(void)
 #endif
 //	TraceReturn(t,"End");
 }
-
-#endif
 //----------------------------------------------------------------------------------
 #ifdef MH_CHECK_KEYS
 void Debug_check_keys(BYTE keys)
@@ -1854,6 +1705,7 @@ void Set_cState(ControlState new_cstate,int ifrom)	// MHH: 02/04/2018. So we kno
 }
 //------------------------------------------------------------------------------------
 extern BYTE Auto_check_manual(void);
+
 //extern bool AC200_status_test;
 void controlCycle (void)
 {
@@ -1890,7 +1742,10 @@ void controlCycle (void)
 	}
 #endif
 
-    actualSpeed = Get_RPM();		// MHH:22/12/2024
+#ifndef MH_CLAUDE_CONTROL
+	RPM_update_history();
+#endif
+	actualSpeed = Get_RPM();		// MHH:22/12/2024
     Ctl_brushless_speed = 0;		// MHH:26/12/2024. Max speed is default.
 
 

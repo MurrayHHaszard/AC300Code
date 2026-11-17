@@ -27,6 +27,7 @@
 #include "remote.h"
 #include "diags.h"
 #include "turbotech.h"
+#include "rpm.h"
 
 #define PC_PUTS(a)			PC_puts(a)
 #define PC_PUTC(a)			PC_putc(a)
@@ -103,7 +104,7 @@ int SIG100_set_position_len(uint16_t len_in_mm_2dec)
 {
 	Manual_position_encoder = false;
 	if(operatingMode() != MANUAL) return 0;	// May have to allow other possibility for RC.
-	if(Prop_rpm > 0) return 0;
+	if(Get_RPM() > 0) return 0;
 
 	float pos_mm = ((float)len_in_mm_2dec)/ 100;
 	int epos = (int)((pos_mm/Hub_calc.hall_incr_mm)+0.5F);
@@ -2549,6 +2550,8 @@ void SIG100_send_init(void)
 uint8_t Hub_heater_threshhold_adc8;
 bool Hub_manual_mode = false;
 char Get_SIG100_speed_from_remote(void);
+int Get_SIG100_pct_from_remote(void);		// Claude 12/11/2026 (remote.c)
+uint8_t Get_BL_speed_from_pct(int motor_speed_pct);	// control.c
 void SIG100_send_command(void)
 {
 	char c;
@@ -2640,9 +2643,14 @@ void SIG100_send_command(void)
 //
 
     			char remote_speed = Get_SIG100_speed_from_remote();
+    			int remote_pct = Get_SIG100_pct_from_remote();	// Claude 12/11/2026. RC_x=nnn%pp
     			if(remote_speed != 255)
     			{
-        			if(remote_speed > 0)
+        			if(remote_pct > 0)
+        			{
+        				Ctl_brushless_speed = Get_BL_speed_from_pct(remote_pct);	// 128 + pct for hub 1.51 on
+        			}
+        			else if(remote_speed > 0)
         			{
 // Leave as is as hub should take either format
         				remote_speed += '0';
@@ -2733,6 +2741,7 @@ WORD AC200_slider_value;
 WORD AC200_slider_percent10;
 //WORD AC200_slider_pos;
 
+#ifndef MH_CLAUDE_CONTROL
 #define BL_ANGLE_TBL_MAX	10
 uint8_t BL_angle_ix = 0;
 float BL_angle_t[BL_ANGLE_TBL_MAX];
@@ -2755,6 +2764,7 @@ void AC210_SIG100_get_delta_angle(void)
 		last_delta_angle = BL_delta_angle;
 	}
 }
+#endif
 
 void AC210_SIG100_check(void)
 {
