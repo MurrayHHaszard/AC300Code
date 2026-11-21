@@ -1329,6 +1329,7 @@ void main(void)
         // reflect the system state in the LED display
         watchIt2(WD_MAIN+90);
         updateLEDS ();
+        Pcap_poll();		// Claude 21/11/2026 (10.185). Pulse capture listing, a line at a time
 
 //		TraceMsg("main:3");
 

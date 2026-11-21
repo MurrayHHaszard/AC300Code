@@ -1075,7 +1075,62 @@ Added
  *		- control.c: gear ratio (SF_MAG_SPEED), overspeed (BL_CONTROL) and deadband are read every tick, not only at
  *		  start-up: a parameter change takes effect without a restart (bench: 243 -> 254 kept 2.43, engine ~255 rpm high).
  */
-#define SUBVERSION			182			// Claude 17/11/2026
+//#define SUBVERSION			182			// Claude 17/11/2026
+/*
+ *	Version 10183. Claude 20/11/2026. TEST BUILD: trim mode (cs_control.c), for engines whose rpm drifts by itself at a
+ *	fixed blade (Rotax 916 iS boost ramp: Stathis N117ZS, ~200 rpm hunting at take-off power on 10.170).
+ *		- Inside the band, every tick a blade position target from a rate law:
+ *		      target = blade + (rate + error / Tc) / b
+ *		  (rate and error by least squares over the last 0.5 s of per-tick rpm; b = rpm rate change per degree).
+ *		  Sent as the hub encoder position command ('P', Manual_position_encoder; ac210_sig100.c); the hub moves there
+ *		  and stops on the count (hub 1.62 on: learned low-speed drive on the approach). No new target while the error
+ *		  and rate x Tc are below 15 rpm, or if it changes by 0.03 deg or less; at most 1 deg from the blade.
+ *		- Entered from a stop inside the band; left when the rpm leaves the band, the overspeed or run-up logic acts,
+ *		  or the rate is above override_rate_rpm_s. Outside trim mode everything is as 10.182.
+ *		- New parameters BL_TRIM_TC (83, "BLTC", 0.1 s units, 0 = trim off = default: as 10.182; 10 = 1.0 s) and
+ *		  BL_TRIM_B (84, "BLTB", rpm/s per degree, 0 = rpm per degree (130) / 0.3 s = 433).
+ *		- Simulation (recalibrated Sling model, unstable): blade held 137 rpm rms, trim ~9 rpm rms; 912 / Rans no worse.
+ */
+//#define SUBVERSION			183			// Claude 20/11/2026
+/*
+ *	Version 10184. Claude 20/11/2026. Flash log record (M8_T) extended from 32 to 48 bytes (user's request):
+ *		- New fields: (32) bl_target_angle = target angle of a position command ('P': trim mode, RC position), same
+ *		  format as bl_angle, -32768 = none; (34) can_map, (36) can_ambient (0.1 mbar), (38) cs_state (cs_control state,
+ *		  5 = trim), (39) can_power (0.5 %), (40) can_flags (bit 0 CAN data present, bit 1 throttle byte from the CAN),
+ *		  (41) log_format = 1, (42) 6 spare. The CAN fields are 0 until the Rotax CAN is connected. The controller rate is
+ *		  already logged (pwm_val, brushless: rpm per 100 ms).
+ *		- bl_angle (20) and bl_target_angle in HUNDREDTHS of a degree (user, 20/11/2026: trim steps are 0.03-0.1 deg);
+ *		  log_format 1 says so in the record itself, so readers scale per record (older runs: 0 = tenths).
+ *		- The record size is in every checkpoint's 'extended' byte (so the run start record; was 0, older 'X') and in the
+ *		  diagnostic record byte 144 (log_rec_size, was fill0). Readers: 48 there = 48 byte records, else 32. The packing is
+ *		  unchanged (offsets 1-48, bit 7 = last of the tick). Checkpoints are 52 bytes (were 36).
+ *		- The AC300's own log reader (ee_checkpoint_get_data) reads either size, as the ring holds both.
+ *		- Needs AC300DataAnalyser 1.003 / AC200Diagnostics 1.139 or later to read 10.184 runs (older 32 byte runs read as before).
+ *
+ *	Version 10185. Claude 21/11/2026. Fix (10.183 trim): when rpm went to 0 while trim mode held the blade, the trim's
+ *		encoder position command stayed set (Manual_position_encoder), so a hold-mode RC_SETPOS moved the hub to the old
+ *		trim target instead (bench: hub "not moving"). The clean-up now runs at the start of SIG100_send_command, before
+ *		the hold-mode remote position branch returns early. (Defensive: the bench "hub not moving" turned out to be the next item.)
+ *	- Hub link no longer suspended while parameter changes await ATEEPROM=1 (AC210_SIG100_check returned early while
+ *		EEPROM_writes > 0, so an AT parameter write without the commit left the hub uncontrolled and unread until a commit or
+ *		restart; bench 21/11/2026). User: keep communicating while updating parameters.
+ *	- Predicted overspeed less noise-sensitive in trim mode (cs_control.c): there the prediction uses the trim's 0.5 s
+ *		rate and fit instead of the 0.25 s rate and must hold 3 ticks in a row (os_confirm_ticks) before a burst; outside
+ *		trim unchanged (the delay raised run-up peaks 50-90 rpm); reaching max_rpm always acts at once. Bench, flight-level rpm noise (PropSimWin 12): ~7 false bursts per 30 s at 5680-5760 rpm knocked
+ *		trim out and started hunting (Sling and Rans 916 models, trim on or off).
+ *	- Trim quieter at flight-level rpm noise: quiet band 15 -> 30 rpm, minimum target change 0.03 -> 0.08 deg (the motor ran
+ *		two thirds to three quarters of the time in a stable climb / descent at noise 12; trim off about a tenth).
+ *	- Tacho pulse capture for rpm noise analysis (user): ATPCAP=n (1-512) captures the next n raw tacho periods (us) in
+ *		RAM, ATPCAP shows progress, ATPDMP=1 lists them ("PC:START", "PC:<index>,<8 periods>", "PC:END"), a line at a time
+ *		from the main loop when the transmit buffer has room (never holds up the control cycle). ac210_rpm.c.
+ *	- EEPROM_SIZE (ac210_log.h) = 128K, the M24M01 I2C EEPROM (was FLASH_SIZE, 16 MB): the EEPROM position clamp and write
+ *		end-of-device check now stop at the chip's end instead of letting a write wrap to the parameters at 0.
+ *	- Log record CAN fields set out from the Rotax i-Series pilot display CAN spec (all still 0, no CAN input yet):
+ *		(39) can_throttle (was can_power: the ECU sends no power), (40) can_flags bits redefined, the 6 spare bytes now
+ *		(42) can_rpm, (44) can_boost, (46) can_boost_error. Record still 48 bytes. See log.h.
+ */
+//#define SUBVERSION			184			// Claude 20/11/2026
+#define SUBVERSION			185			// Claude 21/11/2026
 
 #define MH_CLAUDE_CONTROL			// MHH:26/10/2026
 

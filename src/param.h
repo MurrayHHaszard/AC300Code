@@ -230,8 +230,10 @@ typedef enum
 	RC_PROPNUM,				// 80. MHH:10/03/2025. Applies only to CAN
 	BL_SCALE_PCT,			// 81. MHH:16/04/2026
 	BL_TAKEOFF_ANGLE,		// 82. Claude 17/11/2026. Static full-throttle take-off blade angle, 1 decimal place (0 = not used)
+	BL_TRIM_TC,				// 83. Claude 20/11/2026. Trim mode: time to remove the error, 0.1 s units (0 = trim off)
+	BL_TRIM_B,				// 84. Claude 20/11/2026. Trim mode: rpm rate change per degree, rpm/s (0 = rpm per degree / 0.3 s)
     // Array Index
-    MAX_P_INDEX				// 83
+    MAX_P_INDEX				// 85
 } ParamIndex;
 
 #define PARAM_CHECK_CODE		135798642L

@@ -8,6 +8,7 @@
 //#include <cr_section_macros.h>
 //#include <string.h>
 #include <stdlib.h>
+#include <stdio.h>		// Claude 21/11/2026. sprintf (pulse capture)
 
 #include "ac210_global.h"
 #include "ac210_timer.h"
@@ -131,6 +132,60 @@ int16_t Prop_delta_t[PROP_DELTA_MAX];
 extern int16_t Engine_rpm_change_in_five_ticks;
 #endif
 void Control_RPM_update(uint32_t period_us);
+
+/*
+ * Claude 21/11/2026 (10.185). Pulse capture, for looking at the rpm noise (stand / flight): the next n raw tacho
+ * periods (us, one per magnet pulse) go into a RAM buffer; then they are listed on the PC port.
+ *   ATPCAP=n   start capturing n periods (1-512; 0 stops)
+ *   ATPCAP     shows PCAP=<captured>/<asked for>
+ *   ATPDMP=1   list them: "PC:START,n=..,SF=..", lines "PC:<index>,<8 periods us>", "PC:END"
+ * The list is sent from the main loop a line at a time, only when the transmit buffer has room, so it never holds up
+ * the control cycle (safe with the engine running). Engine rpm = 60e6 / period x SF_MAG_SPEED / 100.
+ */
+#define PCAP_MAX	512
+static uint32_t Pcap_buf[PCAP_MAX];
+static volatile int Pcap_n, Pcap_want;
+static int Pcap_dump_ix = -1;		// next index to list; -1 = not listing, -2 = header still to send
+int PC_tx_free(void);				// ac210_comms.c
+
+void Pcap_start(int n)
+{
+	if(n < 0) n = 0;
+	if(n > PCAP_MAX) n = PCAP_MAX;
+	Pcap_dump_ix = -1;
+	Pcap_want = 0;
+	Pcap_n = 0;
+	Pcap_want = n;
+}
+int Pcap_count(void) { return Pcap_n; }
+int Pcap_asked(void) { return Pcap_want; }
+void Pcap_dump_start(void) { Pcap_dump_ix = -2; }
+
+void Pcap_poll(void)		// main loop
+{
+	char line[100];
+	if(Pcap_dump_ix == -1) return;
+	if(PC_tx_free() < 100) return;
+	int n = Pcap_n;
+	if(Pcap_dump_ix == -2)
+	{
+		sprintf(line,"PC:START,n=%d,SF=%d,us\r\n",n,getParameter(SF_MAG_SPEED));
+		Pcap_dump_ix = 0;
+	}
+	else if(Pcap_dump_ix >= n)
+	{
+		sprintf(line,"PC:END\r\n");
+		Pcap_dump_ix = -1;
+	}
+	else
+	{
+		int len = sprintf(line,"PC:%d",Pcap_dump_ix);
+		for(int k = 0; k < 8 && Pcap_dump_ix < n; k++)
+			len += sprintf(line + len,",%lu",(unsigned long)Pcap_buf[Pcap_dump_ix++]);
+		sprintf(line + len,"\r\n");
+	}
+	txDebug(line);
+}
 // Note: Changed interrupt initialise so ISR is only called on a falling edge. MHH:12/11/2022
 void Prop_RPM_ISR(void)
 {
@@ -157,6 +212,7 @@ void Prop_RPM_ISR(void)
     Prop_int_usecs = Timer_read_us(&Prop_int_timer);
     Timer_reset(&Prop_int_timer);
     Control_RPM_update(Prop_int_usecs);
+    if(Pcap_n < Pcap_want) Pcap_buf[Pcap_n++] = Prop_int_usecs;	// Claude 21/11/2026. Pulse capture (ATPCAP)
 
 //    Engine_rpm_1dec_prev1 = Engine_rpm_1dec_prev;	// MHH:21/05/2023
 //    Engine_rpm_1dec_prev = Engine_rpm_1dec;

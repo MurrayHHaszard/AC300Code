@@ -41,8 +41,11 @@ typedef enum {
     CS_HOLD,            /* inside the deadband: motor stopped                         */
     CS_CONTROL,         /* normal PD control                                          */
     CS_OVERSPEED,       /* at or heading for max_rpm: full COARSE                     */
-    CS_AT_LIMIT         /* wanted to move but the fine or coarse stop is active       */
+    CS_AT_LIMIT,        /* wanted to move but the fine or coarse stop is active       */
+    CS_TRIM             /* in the band: blade position target from the rate law (trim_target_deg) */
 } CS_STATE_T;
+
+#define CS_TRIM_BUF  32              /* per-tick rpm samples kept for the trim rate (max trim window) */
 
 typedef struct {
     /* ---------------- configuration (set once, see CS_InitDefaults) ---------------- */
@@ -103,6 +106,20 @@ typedef struct {
     float runup_stop_lead_s;        /* the move stops this x blade rate before the goal: 0.19 s */
     float runup_frac;               /* no COARSE below this fraction of the target: 0.85       */
     float runup_settle_s;           /* after the move, below the band: no predictive burst: 1 s */
+    /* Trim mode (Claude 20/11/2026, 10.183): inside the band, every tick a blade POSITION target
+       target = blade + (rate + error / trim_tc_s) / b  (the rate law: the rpm rate is steered to -error / Tc),
+       sent to the hub as an encoder position (control.c / ac210_sig100.c). Needed on engines whose rpm drifts by
+       itself at a fixed blade (916 iS boost ramp). trim_tc_s 0 = off (old behaviour). */
+    float trim_tc_s;                /* time to remove the error: 1.0 s (parameter BL_TRIM_TC; 0 = off) */
+    float trim_b_rpm_s_per_deg;     /* rpm rate change per degree, just after a move (parameter
+                                       BL_TRIM_B; 0 = rpm_per_deg_ss / rpm_response_s)              */
+    float trim_quiet_rpm;           /* no new target while |error| and |rate| x Tc are below this: 30 */
+    int32_t trim_window_ticks;      /* least-squares window for the trim rate and error: 25 (0.5 s) */
+    float trim_min_change_deg;      /* a new target only if it differs by more than this: 0.08 deg  */
+    float trim_max_step_deg;        /* target at most this far from the blade: 1.0 deg              */
+    /* Predicted overspeed (Claude 21/11/2026, 10.185): the prediction must hold this many ticks in a row before
+       it starts a burst (reaching max_rpm still acts at once); in trim mode it uses the trim's 0.5 s rate. */
+    int32_t os_confirm_ticks;       /* 3 (60 ms)                                                    */
 
     /* ---------------- inputs, update before each CS_Update() ---------------- */
     float motor_rpm;                /* optional, for logging only: blade speed is now measured
@@ -122,6 +139,10 @@ typedef struct {
     float external_rate;            /* measured rate minus own_rate: throttle, climb, dive...  */
     int32_t motor_cmd_rpm;          /* last command                                            */
     CS_STATE_T state;
+    bool trim_active;               /* trim mode: send trim_target_deg as a position, motor_cmd_rpm is 0 */
+    float trim_target_deg;          /* blade position target in trim mode                     */
+    float trim_rate;                /* trim least-squares rate (rpm/s) and error (rpm)         */
+    float trim_err;
 
     /* ---------------- internal ---------------- */
     volatile uint32_t rev_period_us[CS_REV_HISTORY];   /* [0] = newest revolution */
@@ -153,6 +174,9 @@ typedef struct {
     bool runup_armed;               /* take-off target, rpm seen below runup_frac, blade fine   */
     bool runup_move;                /* the run-up move is under way                             */
     int32_t runup_settle_ticks;     /* remaining runup_settle_s after the move                 */
+    float trim_buf[CS_TRIM_BUF];    /* engine_rpm per tick, ring buffer                        */
+    int32_t trim_ix, trim_n;
+    int32_t os_confirm_n;           /* ticks in a row the overspeed prediction has been met        */
 } CS_CTRL_T;
 
 /* Fill in Rotax 916 iS defaults (call once, then change what you need) */

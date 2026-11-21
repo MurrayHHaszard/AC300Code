@@ -1581,6 +1581,12 @@ void Send_serial(LPC_USART_T *pUART, RINGBUFF_T *pRB, const void *data, int byte
 	}
 }
 //----------------------------------------------------------------------------
+int PC_tx_free(void)	// Claude 21/11/2026. Free bytes in the PC port transmit buffer (pulse capture listing)
+{
+	if(U0_txring.data == (void *)0) return 0;
+	return RingBuffer_GetFree(&U0_txring);
+}
+//----------------------------------------------------------------------------
 void p_send(const char *buf,uint32_t numChar)
 {
 	//	char tempbuff[100];		// Quick and dirty..

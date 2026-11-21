@@ -122,7 +122,7 @@ typedef struct
 	td_short_TimeStats run;		// (108)32 bytes
 	long log_filesize;			// (140)
 //	BYTE head_wrap_cnt;			// (144)
-	BYTE fill0;					// (144)
+	BYTE log_rec_size;			// (144) Claude 20/11/2026 (10.184). Flash log record size (48); was fill0 (0 = 32 bytes)
 	BYTE pc_prog;				// (145) 1 = User, 2 = Diagnostics, 3 = Programmer. Set by ATCODE=n
 	WORD ac_version;			// (146) MHH:17/04/2026. Use again. ac_version already handled in Datahead_rec, so could reuse this field
 	td_run_errs run_errs;		// (148)  8 bytes

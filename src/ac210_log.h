@@ -67,7 +67,10 @@ extern td_DUMP5Mb Dump5Mb;
 #define EELOG_SPACE			FLASH_PART_SIZE
 #define EELOG_MAX_PAGES		FLASH_PART_PAGES
 #define EELOG_START_POS		FLASH_PART_OFFSET		// Start in sector 1
-#define EEPROM_SIZE			FLASH_SIZE
+//#define EEPROM_SIZE			FLASH_SIZE
+#define EEPROM_SIZE			(128 * 1024)	// Claude 21/11/2026 (10.185). The I2C EEPROM (M24M01, 1 Mbit); was FLASH_SIZE (16 MB),
+											// left from when the log was in the EEPROM. Only ac210_i2c.c uses it: the position
+											// clamp and the write end-of-device check (a write past 128K would wrap to 0).
 
 #define FLASH_SECTOR_OFFSET	1				// Ignore sector zero as slow erase
 //#define FLASH_MAX_SECTORS	256

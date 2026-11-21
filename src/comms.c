@@ -45,6 +45,7 @@ Changes:
 #include "analog.h"	// for A_MOTOR_CURRENT
 #include "xoar.h"
 #include "uuencode.h"
+#include "rpm.h"		// Claude 21/11/2026. Pulse capture
 
 /*
   Coms uses serial port 1. Default is 19200 Baud, 8 data 1 stop  no parity
@@ -3007,6 +3008,23 @@ static int Process_non_indexed_commands(BYTE query,WORD *p_value)
 		break;
 
 	case 'P':
+		if (AT_KeywordMatch("PCAP"))	// Claude 21/11/2026 (10.185). Tacho pulse capture (ac210_rpm.c)
+		{
+			if (query)
+			{
+				sprintf(rs,"PCAP=%d/%d\r\n",Pcap_count(),Pcap_asked());
+				txDebug(rs);
+				return ATX_RETURN;
+			}
+			Pcap_start(value);
+			return ATX_OK;
+		}
+		if (AT_KeywordMatch("PDMP"))
+		{
+			if (query) break;
+			Pcap_dump_start();
+			return ATX_OK;
+		}
         if (AT_KeywordMatch("PARM"))
         {
             // dump all parameters..

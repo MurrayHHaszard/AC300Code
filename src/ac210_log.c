@@ -698,8 +698,12 @@ void ee_ignore_data(int len)
 }
 void ee_checkpoint_get_data(void)
 {
+	// Claude 20/11/2026 (10.184). The ring holds runs of both record sizes: read the 4 byte header, then as many record
+	// bytes as its 'extended' byte says (48 from 10.184; 0 or 'X' = 32), the rest zero.
 	uint8_t *bp = (uint8_t *)&Log_checkpoint;
-	for(int i=0;i<LOG_CHECKPOINT_SIZE;i++) *bp++ = ee_getc();
+	for(int i=0;i<4;i++) *bp++ = ee_getc();
+	int rec_size = (Log_checkpoint.extended == (uint8_t)M8_SIZE) ? (int)M8_SIZE : 32;
+	for(int i=0;i<(int)M8_SIZE;i++) *bp++ = (i < rec_size) ? ee_getc() : 0;
 #ifdef MH_XXX
 	if(Log_checkpoint.extended == 'X')
 	{
@@ -1273,7 +1277,7 @@ void AC210_log_init(void)
 	}
 
 	int s = sizeof(M8_T);
-	if(s != 32)
+	if(s != 48)		// Claude 20/11/2026 (10.184). Was 32
 	{
 		LPRINTF("Log_init: sizeof(M8_T) = %d\r\n",s);
 		DebugAbort("AC210_log_init:1");

@@ -127,7 +127,8 @@ void Log_Checkpoint(uint8_t checkpoint_code)
 	{
 		if(LogData.serial_write_ix == 0) return;	// Only checkpoint timeout if data in buffer
 	}
-	Log_checkpoint.extended = 0;
+	Log_checkpoint.extended = (uint8_t)M8_SIZE;		// Claude 20/11/2026 (10.184). Record size for the readers (was 0 = 32)
+	Stat_Rec.log_rec_size = (uint8_t)M8_SIZE;		// ...and in the diagnostic record
 	if(checkpoint_code == EELOG_C_CHECKPOINT_START)
 	{
 		LogData.first_checkpoint = true;
@@ -175,6 +176,10 @@ extern WORD currentState;
 extern WORD Auto_throttle;
 
 extern BYTE RC_S_mode_byte;	// MHH:10/06/2025
+extern int16_t Log_target_angle;	// Claude 20/11/2026 (10.184). Target angle (hundredths) of the last position command (ac210_sig100.c)
+#include "cs_control.h"
+extern CS_CTRL_T CS_control;
+typedef char M8_size_check[(sizeof(M8_T) == 48) ? 1 : -1];		// The readers expect 48 (log_rec_size / checkpoint 'extended')
 
 //#define NOT_ACTIVE_SECS		(50*2)			// 2 secs
 
@@ -310,7 +315,7 @@ void AC210_eelog(void)
     M8_data.slipring      = ADC_get_slipring_log_data();	// MHH:1/4/23. Remove slipring data - not used after finding brush problem.
 #endif
     float angle = AC210_SIG100_angle();		// MHH:05/12/2022.Brushless fields added.
-	angle *= 10;	// Get ready to convert to integer with 1 implied decimal place round
+	angle *= 100;	// Claude 20/11/2026 (10.184): 2 implied decimal places (was 10 = 1), log_format M8_FORMAT
 //    M8_data.bl_angle      = (int16_t) angle;
     M8_data.bl_angle      = (int16_t) iround(angle);	// MHH:27/11/2025
     int v = (int)SIG100_get_hub_voltage();	// MHH:20/09/2025
@@ -331,6 +336,17 @@ void AC210_eelog(void)
     // M8_data.bl_error = not coded yet.....
     M8_data.bl_enc_rpm = BL_enc_rpm;
     M8_data.bl_dac0_v  = BL_dac0_v;
+    // Claude 20/11/2026 (10.184). Extended record (32 -> 48 bytes)
+    M8_data.bl_target_angle = (BL_command == 'P' || BL_command == 'p') ? Log_target_angle : (int16_t)M8_NO_TARGET;
+    M8_data.log_format = M8_FORMAT;
+    M8_data.cs_state = (uint8_t)CS_control.state;
+    M8_data.can_map = 0;			// Rotax CAN not connected yet
+    M8_data.can_ambient = 0;
+    M8_data.can_throttle = 0;
+    M8_data.can_flags = 0;
+    M8_data.can_rpm = 0;
+    M8_data.can_boost = 0;
+    M8_data.can_boost_error = 0;
     if(Log_pack_data())
     {	// This way should always write whole drecs
     	if(LogData.serial_write_ix >= EE_SER_WRITE_TRIGGER)

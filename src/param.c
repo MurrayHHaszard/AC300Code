@@ -168,6 +168,8 @@ const char pName[MAX_P_INDEX][5] = {
 	"RCPN", // Remote Control Prop Number
 	"BLSP",	// Brushless bl_scale_pct
 	"BLTA",	// Brushless take-off angle (82): blade angle at take-off rpm, full throttle, standing still. Claude 17/11/2026
+	"BLTC",	// Brushless trim time constant (83): 0.1 s units, 0 = trim mode off. Claude 20/11/2026
+	"BLTB",	// Brushless trim b (84): rpm rate change per degree of blade, rpm/s, 0 = automatic. Claude 20/11/2026
 
 };
 
@@ -503,6 +505,8 @@ void loadParameters (void)
 
 			    if((ps.parms[BL_SCALE_PCT] < 10) || (ps.parms[BL_SCALE_PCT] > 500)) ps.parms[BL_SCALE_PCT] = 100;
 			    if(ps.parms[BL_TAKEOFF_ANGLE] > 900) ps.parms[BL_TAKEOFF_ANGLE] = 0;	// Claude 17/11/2026. Not set (e.g. 0xFFFF after an upgrade)
+			    if(ps.parms[BL_TRIM_TC] > 50) ps.parms[BL_TRIM_TC] = 0;		// Claude 20/11/2026. Not set: trim off
+			    if(ps.parms[BL_TRIM_B] > 3000) ps.parms[BL_TRIM_B] = 0;		// Claude 20/11/2026. Not set: automatic
 
 // read in current sense values
                 readI2C (EEPROMREAD, HW_FACTOR_PAGE, HW_FACTOR_OFFSET, (BYTE *)&hwf, sizeof(hwf));
@@ -908,6 +912,14 @@ BYTE setParameter ( ParamIndex idx, WORD nval)
 
     case BL_TAKEOFF_ANGLE:	// Claude 17/11/2026. 0 = not used, else between the fine and coarse stop angles (1 decimal place)
     	rval = (nval == 0 || (nval > ps.parms[BL_FINE_STOP] && nval < ps.parms[BL_COARSE_STOP]));
+    	break;
+
+    case BL_TRIM_TC:	// Claude 20/11/2026. 0 = off, else 0.2 - 5.0 s
+    	rval = (nval == 0 || (nval >= 2 && nval <= 50));
+    	break;
+
+    case BL_TRIM_B:		// Claude 20/11/2026. 0 = automatic, else 50 - 3000 rpm/s per degree
+    	rval = (nval == 0 || (nval >= 50 && nval <= 3000));
     	break;
 
 
@@ -1347,6 +1359,8 @@ void setDefaults (void)
     ps.parms[BL_DIAGNOSTICS] = 0;
     ps.parms[BL_SCALE_PCT] = 100;
     ps.parms[BL_TAKEOFF_ANGLE] = 0;		// Claude 17/11/2026. Not used until set
+    ps.parms[BL_TRIM_TC] = 0;			// Claude 20/11/2026. Trim mode off until set
+    ps.parms[BL_TRIM_B] = 0;			// Claude 20/11/2026. Automatic
 
     ps.parms[SL_T0] = 0;
     ps.parms[SL_T1] = 0;

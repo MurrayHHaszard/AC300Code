@@ -79,6 +79,11 @@ float SIG100_get_hub_voltage(void)	// MHH:25/06/2025
 }
 uint16_t Encoder_target_pos;
 bool Manual_position_encoder=false;
+extern int CS_trim_encoder;			// Claude 20/11/2026 (10.183). Trim mode target (control.c)
+extern int CS_trim_fresh;
+static bool Sig100_trim_position;	// Manual_position_encoder was set by trim mode
+int16_t Log_target_angle;			// Claude 20/11/2026 (10.184). Target angle (hundredths) of the last 'P' command, for the log
+float Sig100_GetBladeAngle(int encoder_pos);
 extern int Prop_rpm;
 uint8_t Manual_position_count;
 int SIG100_get_position_len(uint16_t len_in_mm_2dec)
@@ -2453,6 +2458,7 @@ void SIG100_send_command_pkt(char c)
 		{
 			hub_pos = (uint16_t)Sig100_pos_from_angle(RC_S_target_angle);
 		}
+		Log_target_angle = (int16_t)iround(Sig100_GetBladeAngle(hub_pos) * 100.0F);	// Claude 20/11/2026 (10.184). Logged (log.c), as bl_angle
 		DPRINTF("T=%d\r\n",hub_pos);
 		Sig100_send_pkt[0] = c;	// Either 'P' for normal position, or 'p' for reverse position
 		Put_int2(Sig100_send_pkt+1,hub_pos);
@@ -2573,6 +2579,14 @@ void SIG100_send_command(void)
 		return;
 	}
 
+	// Claude 21/11/2026 (10.185). Trim ended (or rpm lost): back to the normal commands. Done here, before any branch,
+	// as the hold-mode remote position request (RC_SETPOS) returns early and would otherwise use the stale trim target.
+	if(Sig100_trim_position && CS_trim_fresh == 0)
+	{
+		Sig100_trim_position = false;
+		Manual_position_encoder = false;
+	}
+
     OpMode op_mode = operatingMode();
     if(op_mode == MANUAL)
     {
@@ -2669,6 +2683,16 @@ void SIG100_send_command(void)
     	    	{
 //    	    		resetStateBits (310,S_STOP_COARSE);	// MHH:21/07/2025. We need this bit to decide when to exit reverse. So that LED display matches brushed feather
     	    	}
+    		}
+    		// Claude 20/11/2026 (10.183). Trim mode (cs_control.c): a blade position target as an encoder count, sent with
+    		// the encoder position command ('P' + Manual_position_encoder). The hub moves there and stops on the count.
+    		if(CS_trim_fresh > 0 && (c == '.' || c == '+' || c == '-'))
+    		{
+    			CS_trim_fresh--;
+    			Encoder_target_pos = (uint16_t)CS_trim_encoder;
+    			Manual_position_encoder = true;
+    			Sig100_trim_position = true;
+    			c = 'P';
     		}
     	}
     }
@@ -2780,7 +2804,9 @@ void AC210_SIG100_check(void)
 		return;
 	}
 
-	if(EEPROM_writes > 0) return;	// MHH:18/10/2022
+//	if(EEPROM_writes > 0) return;	// MHH:18/10/2022
+	// Claude 21/11/2026 (10.185, user): removed. EEPROM_writes counts parameter changes not yet committed (ATEEPROM=1);
+	// until then the hub was neither commanded nor read. The EEPROM write itself (ParameterFastUpdate) blocks anyway.
 
 	if(SIG100_comms_error)	return;	// MHH:18/11/2022. Quick fix, otherwise cannot connect AC200User.
 

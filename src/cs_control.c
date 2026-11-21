@@ -81,6 +81,20 @@ void CS_InitDefaults(CS_CTRL_T *cs)
     cs->runup_stop_lead_s        = 0.19f;    /* bench run 1141: stopping at blade rate x lag_s (0.12 s) ran 0.2 deg past */
     cs->runup_frac               = 0.85f;    /* user: COARSE below ~5000 for a 5700 take-off is a mistake */
     cs->runup_settle_s           = 1.0f;
+    /* trim mode (Claude 20/11/2026): values from the simulations on the recalibrated Sling 916 iS model and the
+       rpm noise measured in the 912 stand / N117ZS logs (rate noise ~5-14 rpm/s over 0.5 s) */
+    cs->trim_tc_s                = 0.0f;     /* parameter BL_TRIM_TC (control.c); 0 = off */
+    cs->trim_b_rpm_s_per_deg     = 0.0f;     /* parameter BL_TRIM_B; 0 = rpm_per_deg_ss / rpm_response_s */
+    /* Claude 21/11/2026 (10.185): quiet band 15 -> 30 rpm and minimum target change 0.03 -> 0.08 deg. At flight-level
+       rpm noise (PropSimWin 12 = N117ZS 14 rpm/s) the rate jitter alone was worth ~0.03 deg a tick, so nearly every tick
+       gave a new target: in a stable climb / descent the motor ran 51-73 s out of 75-100 (trim off: 3-11 s). */
+    cs->trim_quiet_rpm           = 30.0f;
+    cs->trim_window_ticks        = 25;       /* 0.5 s: half the rate noise of 0.25 s (912 stand 17 -> 5 rpm/s) */
+    cs->trim_min_change_deg      = 0.08f;
+    cs->trim_max_step_deg        = 1.0f;
+    cs->trim_active = false;
+    cs->trim_target_deg = cs->trim_rate = cs->trim_err = 0.0f;
+    cs->trim_ix = cs->trim_n = 0;
 
     cs->motor_rpm = 0.0f;
     cs->encoder_pos = 0;
@@ -261,6 +275,8 @@ int32_t CS_Update(CS_CTRL_T *cs)
         cs->overspeed_latched = false;
         cs->runup_armed = cs->runup_move = false;
         cs->runup_settle_ticks = 0;
+        cs->trim_active = false;
+        cs->trim_n = 0;
         cmd = 0.0f;
     }
     else {
@@ -280,6 +296,33 @@ int32_t CS_Update(CS_CTRL_T *cs)
             }
         }
         cs->rpm_change_100ms = cs->engine_rpm_rate * 0.1f;
+
+        /* ---- trim rate and error: least squares over the last trim_window_ticks ticks of engine_rpm ----
+           (per tick, longer than the revolution-based rate: in the band the rate is what the trim acts on, and
+           0.5 s has half the noise of 0.25 s) */
+        {
+            int32_t nw = cs->trim_window_ticks;
+            if (nw < 5) nw = 5;
+            if (nw > CS_TRIM_BUF) nw = CS_TRIM_BUF;
+            cs->trim_buf[cs->trim_ix] = cs->engine_rpm;
+            cs->trim_ix = (cs->trim_ix + 1) % CS_TRIM_BUF;
+            if (cs->trim_n < CS_TRIM_BUF) cs->trim_n++;
+            if (cs->trim_n >= nw) {
+                /* x = age in ticks (0 = newest); slope per tick is -(fit slope) */
+                float sx = 0.0f, sy = 0.0f, sxx = 0.0f, sxy = 0.0f;
+                for (int32_t i = 0; i < nw; i++) {
+                    float y = cs->trim_buf[(cs->trim_ix - 1 - i + 2 * CS_TRIM_BUF) % CS_TRIM_BUF];
+                    float x = (float)i;
+                    sx += x; sy += y; sxx += x * x; sxy += x * y;
+                }
+                float n = (float)nw;
+                float den = n * sxx - sx * sx;
+                float slope = (den > 0.0f) ? (n * sxy - sx * sy) / den : 0.0f;    /* rpm per tick of age */
+                float y0 = (sy - slope * sx) / n;                                   /* fit at the newest tick */
+                cs->trim_rate = -slope / CS_TICK_S;
+                cs->trim_err = y0 - cs->target_rpm;
+            }
+        }
 
         /* ---- measurements ---- */
         float d   = 0.5f * win_a + cs->rev_age_s;   /* age of the rpm measurement (s) */
@@ -379,15 +422,23 @@ int32_t CS_Update(CS_CTRL_T *cs)
            5700 (bench run 977). */
         if (cs->motor_cmd_rpm != 0) cs->quiet_ticks = 0;
         else if (cs->quiet_ticks < 1000) cs->quiet_ticks++;
-        float os_pred = cs->rpm_smoothed + own_pending + cs->external_rate * (d + cs->lag_s);
-        if (cs->external_rate > 0.0f) {
+        /* Claude 21/11/2026 (10.185): in trim mode the prediction uses the trim's 0.5 s least-squares rate and fit
+           (about a third of the 0.25 s rate noise; the trim's own small moves are part of what it acts on). */
+        float os_r = cs->external_rate;
+        float os_base = cs->rpm_smoothed + own_pending;
+        if (cs->trim_active && cs->trim_n >= cs->trim_window_ticks) {
+            os_r = cs->trim_rate;
+            os_base = cs->target_rpm + cs->trim_err;
+        }
+        float os_pred = os_base + os_r * (d + cs->lag_s);
+        if (os_r > 0.0f) {
             float coarse_deg_s = cs->motor_coarse_loaded_rpm / 60.0f * deg_per_motor_rev;
             float resp = cs->rpm_response_s;
             if (cs->os_response_s > resp && cs->rpm_smoothed >= cs->target_rpm - cs->os_response_zone_rpm &&
                 cs->quiet_ticks * CS_TICK_S >= cs->os_quiet_s)
                 resp = cs->os_response_s;
-            float t_stop = (cs->external_rate * resp / S) / coarse_deg_s;
-            os_pred += 0.5f * cs->external_rate * t_stop;
+            float t_stop = (os_r * resp / S) / coarse_deg_s;
+            os_pred += 0.5f * os_r * t_stop;
         }
 
         /* While the blade is still moving FINE, the first response is simply to stop
@@ -459,6 +510,18 @@ int32_t CS_Update(CS_CTRL_T *cs)
         bool runup_block = cs->runup_armed || cs->runup_move ||
                            (cs->runup_settle_ticks > 0 && cs->rpm_smoothed < cs->target_rpm - db);
 
+        /* Predicted overspeed (rising faster than overspeed_min_rate and heading for the level, or a fast rise heading
+           above the target): in trim mode only once it has held os_confirm_ticks in a row (Claude 21/11/2026, 10.185:
+           noise spikes in the rate set off false bursts that knocked trim out). Not outside trim: there it gained
+           nothing (the band logic hunts at that noise anyway) and the delay raised the take-off run-up peaks 50-90 rpm
+           (Rans 916 model, bench runs 1288-1290 vs 1251-1253). Reaching max_rpm always acts at once. */
+        bool os_predicted = !runup_block && not_moving_fine &&
+                            ((os_r > cs->overspeed_min_rate_rpm_s && os_pred >= os_level) ||
+                             (os_r > cs->fast_rise_rpm_s && os_pred > cs->target_rpm));
+        if (!os_predicted) cs->os_confirm_n = 0;
+        else if (cs->os_confirm_n < 1000) cs->os_confirm_n++;
+        bool os_confirmed = os_predicted && (!cs->trim_active || cs->os_confirm_n >= cs->os_confirm_ticks);
+
         if (cs->overspeed_latched) {
             /* release once the prediction (which includes the rpm drop still to come
                from the blade movement already made) is clearly below the level */
@@ -500,9 +563,7 @@ int32_t CS_Update(CS_CTRL_T *cs)
                                             (above max_rpm but falling also waits) */
         } else if (cs->relatch_ticks > 0 && cs->engine_rpm < cs->max_rpm && os_pred < cs->max_rpm) {
             cs->relatch_ticks--;
-        } else if (cs->engine_rpm >= cs->max_rpm ||
-                   (!runup_block && not_moving_fine && cs->external_rate > cs->overspeed_min_rate_rpm_s && os_pred >= os_level) ||
-                   (!runup_block && not_moving_fine && cs->external_rate > cs->fast_rise_rpm_s && os_pred > cs->target_rpm)) {
+        } else if (cs->engine_rpm >= cs->max_rpm || os_confirmed) {
             cs->runup_move = false;      /* max_rpm reached during the run-up move: the overspeed response takes over */
             cs->overspeed_latched = true;
             cs->latch_ticks = (int32_t)(cs->overspeed_min_hold_s / CS_TICK_S + 0.5f);
@@ -513,7 +574,44 @@ int32_t CS_Update(CS_CTRL_T *cs)
             cs->settle_ticks = 0;
         }
 
-        if (cs->overspeed_latched) {
+        /* ---- trim mode (Claude 20/11/2026, 10.183) ----
+           Inside the band, instead of waiting for the rpm to leave it and then driving at a speed, every tick a blade
+           position target from the rate law: the rpm rate is steered to -error / Tc, so
+               target = blade + (rate + error / Tc) / b      (b = rpm rate change per degree just after a move)
+           and the hub's own position control moves there and stops on the encoder count. On the Rotax 916 iS boost
+           ramp (Stathis N117ZS, Sling) the rpm drifts away by itself at a fixed blade; acting on the error alone
+           can't hold that, acting on the rate can (simulation, recalibrated Sling model: held 137 rpm rms -> ~9;
+           0.5 s steps ~18; stable 912 / Rans engines unchanged or better). Entered from a stop inside the band;
+           left when the rpm leaves the band, an overspeed / run-up takes over, or an external factor acts (rate
+           above override_rate_rpm_s) - the band logic then works as before. */
+        {
+            bool trim_ok = cs->trim_tc_s > 0.0f && cs->trim_n >= cs->trim_window_ticks &&
+                           !cs->overspeed_latched && !cs->runup_move && !runup_block && cs->settle_ticks == 0 &&
+                           Absf(cs->external_rate) < cs->override_rate_rpm_s;
+            if (!trim_ok || Absf(cs->trim_err) > db) {
+                cs->trim_active = false;
+            } else if (!cs->trim_active && prev_cmd == 0.0f && Absf(err) <= db) {
+                cs->trim_active = true;
+                cs->trim_target_deg = cs->blade_deg;       /* start by holding where it is */
+            }
+        }
+
+        if (cs->trim_active) {
+            float tc = cs->trim_tc_s;
+            float b = (cs->trim_b_rpm_s_per_deg > 1.0f) ? cs->trim_b_rpm_s_per_deg : S / cs->rpm_response_s;
+            float e_t = cs->trim_err, r_t = cs->trim_rate;
+            bool quiet = Absf(e_t) < cs->trim_quiet_rpm && Absf(r_t) * tc < cs->trim_quiet_rpm;
+            if (!quiet) {
+                float want = Clampf((r_t + e_t / tc) / b, -cs->trim_max_step_deg, cs->trim_max_step_deg);
+                if ((want < 0.0f && (cs->stop_flags & CS_STOP_FINE)) || (want > 0.0f && (cs->stop_flags & CS_STOP_COARSE)))
+                    want = 0.0f;
+                float tgt = cs->blade_deg + want;
+                if (Absf(tgt - cs->trim_target_deg) > cs->trim_min_change_deg) cs->trim_target_deg = tgt;
+            }
+            cs->state = CS_TRIM;
+            cmd = 0.0f;
+        }
+        else if (cs->overspeed_latched) {
             /* COARSE at a speed graded by how far above the target the rpm is heading:
                blade degrees needed = predicted excess / S, times the proportional gain,
                raised toward above_target_gain as the prediction approaches max_rpm.

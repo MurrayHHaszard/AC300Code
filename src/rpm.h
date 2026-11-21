@@ -31,4 +31,10 @@ WORD Get_RPM(void);
 BYTE ignSpeed (ULONG *rpm);
 extern uint16_t Engine_rpm;
 extern int16_t Engine_rpm_change_in_five_ticks;
+// Claude 21/11/2026 (10.185). Tacho pulse capture (ac210_rpm.c; ATPCAP / ATPDMP)
+void Pcap_start(int n);
+int Pcap_count(void);
+int Pcap_asked(void);
+void Pcap_dump_start(void);
+void Pcap_poll(void);
 #endif

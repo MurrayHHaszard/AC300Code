@@ -1023,6 +1023,9 @@ void RPM_update_history(void)
 //----------------------------------------------------------------------------------------------------------------------------------------------
 CS_CTRL_T CS_control;
 bool CS_init_done=false;
+int CS_trim_encoder;				// Claude 20/11/2026 (10.183). Trim mode: hub encoder target (valid while CS_trim_fresh > 0)
+int CS_trim_fresh;
+int Sig100_pos_from_angle(float angle);
 static int CS_hub_version = -1;		// Claude 13/11/2026. Hub firmware / Maxon mode the profile was set for
 static bool CS_hub_maxon;
 float Sig100_GetBladeAngle(int encoder_pos);
@@ -1030,6 +1033,7 @@ void Brushless_control(void)	// See if controlling speed helps
 {
 
 	Set_cState(C_IDLE,201);		// MHH:30/01/2026
+	CS_trim_fresh = 0;			// Claude 20/11/2026. Set again below only while trim mode is active
 
 	OpMode mode = operatingMode ();
 
@@ -1086,9 +1090,22 @@ void Brushless_control(void)	// See if controlling speed helps
 	int fine_stop_angle = (int16_t)getParameter(BL_FINE_STOP);
 	int coarse_stop_angle = (int16_t)getParameter(BL_COARSE_STOP);
 	CS_control.takeoff_angle_deg = (takeoff_angle > fine_stop_angle && takeoff_angle < coarse_stop_angle) ? (float)takeoff_angle / 10.0f : 0.0f;
+	// Claude 20/11/2026 (10.183). Trim mode: Tc in tenths of a second (0 = off), b in rpm/s per degree (0 = from S / response).
+	CS_control.trim_tc_s = (float)getParameter(BL_TRIM_TC) / 10.0f;
+	CS_control.trim_b_rpm_s_per_deg = (float)getParameter(BL_TRIM_B);
 
 	int32_t pitch_motor_tgt_rpm = CS_Update(&CS_control);
 	Engine_rpm_change_in_five_ticks = (int16_t)CS_control.rpm_change_100ms;
+
+	if(CS_control.trim_active)		// Claude 20/11/2026 (10.183). Blade position target as an encoder count (ac210_sig100.c sends 'P')
+	{
+		CS_trim_encoder = Sig100_pos_from_angle(CS_control.trim_target_deg);
+		CS_trim_fresh = 3;			// Used by the hub command for up to 3 sends unless renewed (stale if control stops)
+		Ctl_brushless_speed = 0;
+		Set_cState(C_IDLE,206);
+		return;
+	}
+	CS_trim_fresh = 0;
 
 //	DPRINTF("nrpm:%d\r\n",pitch_motor_tgt_rpm);
 	int arpm = abs(pitch_motor_tgt_rpm);
